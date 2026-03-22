@@ -185,7 +185,7 @@ The system can also propose its own improvements via observers that monitor heal
 
 ## License
 
-TBD
+[MIT](LICENSE)
 
 ---
 
