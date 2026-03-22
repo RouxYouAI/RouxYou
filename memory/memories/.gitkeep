@@ -1,0 +1,2 @@
+# RAG index files (index.faiss, metadata.json) are written here by ingest_self.py.
+# Do not commit contents — build the index locally after cloning.

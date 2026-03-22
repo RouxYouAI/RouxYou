@@ -1,0 +1,41 @@
+# Secrets — NEVER commit these
+.env
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+venv/
+.venv/
+ENV/
+
+# Runtime state — user-specific, regenerated at runtime
+# (directories are committed as empty via .gitkeep, contents are not)
+state/*
+!state/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# RAG index — built locally by ingest_self.py, never committed
+memory/memories/*
+!memory/memories/.gitkeep
+memory.json
+memory.json.lock
+tasks.json
+skills.json
+active_pids.json
+
+# Deploy artifacts
+staging/
+archive/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

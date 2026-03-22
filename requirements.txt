@@ -1,0 +1,62 @@
+# RouxYou — Python Dependencies
+# Install: pip install -r requirements.txt
+#
+# Optional groups are commented out.
+# Install them only if you're using those features.
+
+# ── Core web framework ────────────────────────────────────────────────────────
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+aiohttp>=3.9.0
+httpx>=0.27.0
+requests>=2.31.0
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+streamlit>=1.33.0          # 1.33+ required for st.fragment auto-refresh
+
+# ── Data / config ─────────────────────────────────────────────────────────────
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# ── RAG / vector memory ───────────────────────────────────────────────────────
+faiss-cpu>=1.8.0           # Use faiss-gpu if you have a GPU and want faster search
+numpy>=1.26.0
+
+# ── File locking (proposal bus, black box) ───────────────────────────────────
+filelock>=3.13.0
+
+# ── PDF generation (invoice system) ──────────────────────────────────────────
+reportlab>=4.2.0
+
+# ── System monitoring (infrastructure_monitor, proposer) ─────────────────────
+psutil>=5.9.0
+
+# ── Optional: Web search via DuckDuckGo ──────────────────────────────────────
+# Zero config — works out of the box with search.provider=duckduckgo
+ddgs>=7.0.0                      # Formerly duckduckgo-search (renamed)
+
+# ── Optional: Voice — STT (requires NVIDIA GPU + CUDA) ───────────────────────
+# pip install faster-whisper
+# Also requires:
+#   pip install sounddevice scipy webrtcvad
+#
+# faster-whisper        # STT — Whisper large-v3-turbo on CUDA
+# sounddevice           # microphone capture
+# scipy                 # audio resampling for VAD
+# webrtcvad             # voice activity detection (wake word)
+
+# ── Optional: Vision (screen capture + multimodal analysis) ──────────────────
+# pip install pyautogui pillow
+# Also requires Ollama model: ollama pull minicpm-v
+#
+# pyautogui             # screen capture
+# Pillow                # image handling
+
+# ── Optional: Ollama Python client (used by vision capability) ───────────────
+# pip install ollama
+# ollama
+
+# ── Optional: SearXNG search (self-hosted, privacy-first alternative to DDG) ─
+# No Python package needed — SearXNG runs as a Docker container.
+# See config.example.yaml tts.searxng_url and QUICKSTART.md.

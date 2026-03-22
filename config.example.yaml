@@ -1,0 +1,99 @@
+# ============================================================
+# RouxYou — Configuration Template
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is excluded from git — never commit it.
+# ============================================================
+
+# --- Paths ---
+# Absolute path to the root of your RouxYou installation.
+# On Windows: C:/Users/yourname/Desktop/RouxYou_Public
+# On Linux/Mac: /home/yourname/rouxyou
+base_dir: "C:/Users/YOUR_USERNAME/Desktop/RouxYou_Public"
+
+# --- Ports ---
+# Change these if you have conflicts on your machine.
+ports:
+  gateway: 8000
+  orchestrator: 8001
+  coder: 8002
+  worker: 8003
+  memory: 8004
+  watchtower_supervisor: 8010
+  rag_api: 8011
+  watchtower_cron: 8012
+  roux_voice: 8014
+  dashboard: 8501
+  # Staging ports used during blue-green deploys
+  staging_orchestrator: 9001
+  staging_coder: 9002
+  staging_worker: 9003
+
+# --- Ollama / LLM ---
+ollama_host: "http://localhost:11434"
+models:
+  router: "ministral:3b"          # Fast routing model (~3B params)
+  reasoning: "qwen3:14b-q4_K_M"   # Deep reasoning / code gen (~14B params)
+  embeddings: "nomic-embed-text"   # Embeddings for RAG
+
+# --- Home Assistant (optional) ---
+# Remove or leave blank if you're not using HA integration.
+home_assistant:
+  url: "http://YOUR_HA_IP:8123"
+  # Token goes in .env as HA_TOKEN
+
+# --- Remote Server (optional) ---
+# For monitoring a hypervisor or remote machine (e.g. Proxmox, TrueNAS, bare-metal node).
+# Remove or leave blank if you don't have one.
+remote_server:
+  host: "YOUR_SERVER_IP"       # e.g. 192.168.1.100 (Proxmox host, NAS, etc.)
+  user: "root@pam"             # SSH or API user
+  # Password goes in .env as REMOTE_SERVER_PASSWORD
+
+# --- Search ---
+# Choose your web search provider:
+#   "searxng"     — Self-hosted SearXNG (privacy-first, recommended)
+#   "duckduckgo"  — No setup required, uses ddgs library (pip install ddgs)
+#   "none"        — Disable web search entirely
+search:
+  provider: "duckduckgo"   # Start here — no setup needed
+  searxng_url: ""          # Set this if provider is "searxng", e.g. http://192.168.1.x:8888
+
+# --- TTS (Text-to-Speech for Roux voice) ---
+# "kitten"  — Self-hosted Kitten TTS (https://github.com/thwiki/koe)
+#             Privacy-first, runs on your LAN. Requires a separate server.
+# "none"    — Disable audio output entirely. Roux runs text-only.
+#             Voice endpoints still work for text-in/text-out.
+#
+# TO SET UP KITTEN TTS:
+#   1. Clone and run: https://github.com/thwiki/koe
+#   2. Set kitten_url to http://<your-server-ip>:5100
+#   3. Set provider to "kitten"
+tts:
+  provider: "none"      # Start here — no setup needed
+  kitten_url: ""        # e.g. http://192.168.1.x:5100
+  voice: "en_US-amy-medium"   # Voice model name on your Kitten server
+  speed: 1.0                  # Playback speed multiplier
+
+# --- Voice (Roux) ---
+voice:
+  enabled: false         # Set to true after installing Whisper + Piper
+  # Path to your Piper TTS executable
+  piper_executable: "piper"
+  # Voice model file (relative to base_dir or absolute)
+  voice_model: "voices/en_GB-cori-medium.onnx"
+  # Whisper STT model
+  whisper_model: "large-v3-turbo"
+  # Wake word (leave blank for always-on)
+  wake_word: ""
+
+# --- Memory Decay ---
+memory:
+  age_half_life_days: 14
+  min_utility: 0.15
+  max_age_days: 60
+
+# --- Auto-Approve ---
+auto_approve:
+  enabled: false
+  daily_limit: 10
+  min_confidence: 0.8
