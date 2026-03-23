@@ -37,24 +37,28 @@ class RedactingFormatter(logging.Formatter):
         super().__init__(fmt, datefmt)
 
     def format(self, record):
+        # Work on a copy so multiple handlers don't stack modifications
+        import copy
+        rec = copy.copy(record)
+
         # Inject trace ID if available
         trace_id = _get_trace_id()
         if trace_id:
-            record.msg = f"[{trace_id}] {record.msg}"
+            rec.msg = f"[{trace_id}] {rec.msg}"
 
         # Redact the message itself
-        record.msg = _get_redact()(str(record.msg))
+        rec.msg = _get_redact()(str(rec.msg))
         # Redact any string args
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {k: _get_redact()(str(v)) if isinstance(v, str) else v
-                               for k, v in record.args.items()}
-            elif isinstance(record.args, tuple):
-                record.args = tuple(
+        if rec.args:
+            if isinstance(rec.args, dict):
+                rec.args = {k: _get_redact()(str(v)) if isinstance(v, str) else v
+                            for k, v in rec.args.items()}
+            elif isinstance(rec.args, tuple):
+                rec.args = tuple(
                     _get_redact()(str(a)) if isinstance(a, str) else a
-                    for a in record.args
+                    for a in rec.args
                 )
-        return super().format(record)
+        return super().format(rec)
 
 
 def get_logger(service_name: str) -> logging.Logger:

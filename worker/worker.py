@@ -4,8 +4,6 @@ Responsibilities: File Ops, Command Execution, Web Search,
                   Vision, Verification, Blue-Green Deploy Pipeline.
 """
 
-from worker.capabilities.vision import capture_screen_analysis
-from worker.capabilities.verify import run_verification
 import sys
 import os
 import json
@@ -20,7 +18,12 @@ from dotenv import load_dotenv
 _PROJECT_ROOT = Path(__file__).parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
+# Must be set before worker.capabilities imports
 sys.path.insert(0, str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT.parent))
+
+from worker.capabilities.vision import capture_screen_analysis
+from worker.capabilities.verify import run_verification
 
 from fastapi import FastAPI, Body
 import uvicorn
