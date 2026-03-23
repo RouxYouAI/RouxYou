@@ -3,15 +3,21 @@ Proposal Handler — Manages the lifecycle of system proposals.
 Extracted from orchestrator.py to keep concerns separated.
 """
 
+import json
+import time
 import aiohttp
+from pathlib import Path
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from .memory import memory
 from .schemas import TaskContext
 from .task_queue import TaskQueue, TaskPriority
 from .blackbox import log_event as _bb_log
 from .logger import get_logger
+
+BASE_DIR = Path(__file__).parent.parent
+TASKS_FILE = BASE_DIR / "tasks.json"
 
 logger = get_logger("proposal_handler")
 
@@ -57,6 +63,8 @@ async def handle_proposal(
         return await _execute_watchtower(submission, watchtower_cron_url)
     elif submission.executor in ("coder", "worker"):
         return await _execute_code(submission, task_queue)
+    elif submission.executor == "task_action":
+        return await _execute_task_action(submission, watchtower_cron_url)
     elif submission.executor == "manual":
         return await _execute_manual(submission, watchtower_cron_url)
     return {"success": False, "error": f"Unknown executor: {submission.executor}"}
@@ -141,6 +149,95 @@ async def _execute_code(sub: ProposalSubmission, task_queue: TaskQueue) -> Dict:
         "category": sub.category, "executor": sub.executor, "priority": sub.priority,
     }
     return {"success": True, "queued": True, "task_id": task_id, "priority": priority.name.lower()}
+
+
+async def _execute_task_action(sub: ProposalSubmission, watchtower_cron_url: str) -> Dict:
+    """Handle task-category proposals by acting on stale/failed tasks."""
+    action = sub.executor_meta.get("action", "cancel_stale")
+    result_data = {"action": action, "affected": []}
+
+    try:
+        if action == "cancel_stale":
+            result_data = _cancel_stale_tasks()
+        elif action == "cancel_failed":
+            result_data = _cancel_failed_tasks()
+        else:
+            result_data = {"success": False, "error": f"Unknown task action: {action}"}
+    except Exception as e:
+        result_data = {"success": False, "error": str(e)}
+
+    success = result_data.get("success", False)
+    new_state = "completed" if success else "failed"
+    await finalize_proposal(sub, new_state, watchtower_cron_url, result_data)
+    return {"success": success, "result": result_data, "state": new_state}
+
+
+def _cancel_stale_tasks(max_age_hours: int = 24) -> Dict:
+    """Cancel pending tasks older than max_age_hours from tasks.json."""
+    if not TASKS_FILE.exists():
+        return {"success": True, "cancelled": 0, "message": "No tasks.json found", "affected": []}
+
+    try:
+        with open(TASKS_FILE, "r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, Exception):
+        return {"success": False, "error": "Could not read tasks.json"}
+
+    # Handle both list and dict formats
+    if isinstance(data, list):
+        tasks = data
+    elif isinstance(data, dict):
+        tasks = data.get("tasks", [])
+    else:
+        return {"success": False, "error": "Unexpected tasks.json format"}
+
+    now = time.time()
+    cutoff = now - (max_age_hours * 3600)
+    cancelled = []
+    kept = []
+
+    for task in tasks:
+        is_stale = (
+            task.get("status") == "pending"
+            and task.get("created_at", now) < cutoff
+        )
+        if is_stale:
+            task["status"] = "cancelled"
+            task["cancelled_at"] = now
+            task["cancelled_reason"] = "Auto-cancelled: stale (>24h pending)"
+            cancelled.append({
+                "title": task.get("title", "unknown")[:80],
+                "age_hours": round((now - task.get("created_at", now)) / 3600, 1),
+            })
+        kept.append(task)
+
+    # Write back
+    if isinstance(data, list):
+        write_data = kept
+    else:
+        data["tasks"] = kept
+        write_data = data
+
+    with open(TASKS_FILE, "w") as f:
+        json.dump(write_data, f, indent=2)
+
+    if cancelled:
+        names = ", ".join(t["title"] for t in cancelled)
+        logger.info(f"TASK_ACTION: Cancelled {len(cancelled)} stale tasks: {names}")
+
+    return {
+        "success": True,
+        "cancelled": len(cancelled),
+        "affected": cancelled,
+        "message": f"Cancelled {len(cancelled)} stale task(s)" if cancelled else "No stale tasks found",
+    }
+
+
+def _cancel_failed_tasks() -> Dict:
+    """Remove repeatedly failed tasks from the queue history."""
+    from .task_queue import TaskQueue
+    # For now, just report — don't delete queue history
+    return {"success": True, "cancelled": 0, "message": "Failed task cleanup not yet implemented"}
 
 
 async def _execute_manual(sub: ProposalSubmission, watchtower_cron_url: str) -> Dict:

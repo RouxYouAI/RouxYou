@@ -288,9 +288,10 @@ def observe_task_patterns(tracker: ProposalTracker) -> List[Proposal]:
                 if not tracker.already_proposed(title):
                     proposals.append(Proposal(
                         title=title,
-                        description=f"{len(stale_pending)} tasks pending >24h: {all_names}.",
+                        description=f"{len(stale_pending)} tasks pending >24h: {all_names}. "
+                                    "Approve to cancel stale tasks and clean up the queue.",
                         category="tasks", priority=4,
-                        proposed_action="Human: review stale tasks in Task Queue tab",
+                        proposed_action=f"Cancel {len(stale_pending)} stale pending tasks: {all_names}",
                         evidence=f"Stale tasks: {all_names}",
                     ))
         except Exception:

@@ -56,7 +56,7 @@ MAX_HISTORY = 100
 DISMISS_COOLDOWN_HOURS = 12
 
 STATES = {"pending", "approved", "executing", "completed", "failed", "dismissed"}
-EXECUTORS = {"watchtower", "coder", "worker", "manual"}
+EXECUTORS = {"watchtower", "coder", "worker", "task_action", "manual"}
 
 DEFAULT_AUTO_APPROVE_CONFIG = {
     "enabled": True,
@@ -131,8 +131,10 @@ def _infer_executor(category: str, title: str, proposed_action: str) -> str:
         return "worker"
     if category == "skills":
         return "manual"
+    if category == "tasks" and any(w in action_lower for w in ["cancel", "clean", "stale"]):
+        return "task_action"
     if category == "tasks" and "review" in action_lower:
-        return "manual"
+        return "task_action"
     return "manual"
 
 
@@ -335,6 +337,12 @@ def publish_proposal(
             svc = _extract_service_name(title)
             if svc:
                 proposal["executor_meta"]["service_name"] = svc
+
+        if category == "tasks":
+            if "stale" in title.lower():
+                proposal["executor_meta"]["action"] = "cancel_stale"
+            elif "fail" in title.lower():
+                proposal["executor_meta"]["action"] = "cancel_failed"
 
         active.append(proposal)
         _save_active(active)
