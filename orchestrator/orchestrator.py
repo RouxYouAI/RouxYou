@@ -9,7 +9,6 @@ import sys
 import os
 import asyncio
 import aiohttp
-import re
 import time as _time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -34,20 +33,13 @@ from shared.companion import (
 )
 from shared.blackbox import log_event as _bb_log
 from shared.roux_client import roux as _roux
+from shared.redact import redact as _redact
+from shared.proposal_handler import (
+    ProposalSubmission, handle_proposal, finalize_proposal,
+    proposal_task_map as _proposal_task_map,
+)
+from shared.trace import set_trace_id, HEADER_NAME as TRACE_HEADER
 from config import CONFIG
-
-_proposal_task_map: dict = {}
-
-_CRED_PATTERNS = [
-    re.compile(r'(?i)(TOKEN|PASSWORD|SECRET|API_KEY|APIKEY|AUTH|CREDENTIAL|PRIVATE_KEY)\s*[=:]\s*\S+'),
-    re.compile(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*'),
-    re.compile(r'(?<=[=:\s])[A-Za-z0-9+/\-._]{40,}={0,3}'),
-]
-
-def _redact(text: str) -> str:
-    for p in _CRED_PATTERNS:
-        text = p.sub("[REDACTED]", text)
-    return text
 
 # --- CONFIGURATION ---
 PORT             = CONFIG.PORT_ORCHESTRATOR
@@ -68,6 +60,21 @@ _start_time = _time.time()
 _request_count = 0
 task_queue = TaskQueue()
 app = FastAPI(title="RouxYou Orchestrator")
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        trace_id = request.headers.get(TRACE_HEADER, "")
+        if trace_id:
+            set_trace_id(trace_id)
+        response = await call_next(request)
+        if trace_id:
+            response.headers[TRACE_HEADER] = trace_id
+        return response
+
+app.add_middleware(TraceMiddleware)
 
 
 # =====================================================
@@ -135,114 +142,12 @@ async def archive_all_tasks():
 
 
 # =====================================================
-#  PROPOSAL EXECUTION
+#  PROPOSAL EXECUTION (delegated to shared.proposal_handler)
 # =====================================================
-
-class ProposalSubmission(BaseModel):
-    proposal_id: str
-    title: str
-    description: str
-    category: str
-    priority: int
-    proposed_action: str
-    executor: str
-    executor_meta: Dict[str, Any] = {}
-
 
 @app.post("/queue/proposal")
 async def submit_proposal(submission: ProposalSubmission):
-    prop_id = submission.proposal_id
-    logger.info(f"PROPOSAL: {prop_id} — {submission.title} (executor: {submission.executor})")
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                f"{WATCHTOWER_CRON_URL}/proposals/{prop_id}/state",
-                params={"new_state": "executing"}, timeout=5,
-            )
-    except Exception:
-        pass
-
-    if submission.executor == "watchtower":
-        return await _execute_watchtower_proposal(submission)
-    elif submission.executor in ("coder", "worker"):
-        return await _execute_code_proposal(submission)
-    elif submission.executor == "manual":
-        return await _execute_manual_proposal(submission)
-    return {"success": False, "error": f"Unknown executor: {submission.executor}"}
-
-
-async def _finalize_proposal(sub: ProposalSubmission, final_state: str, result_data: Any = None):
-    success = final_state == "completed"
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                f"{WATCHTOWER_CRON_URL}/proposals/{sub.proposal_id}/state",
-                params={"new_state": final_state}, timeout=5,
-            )
-    except Exception:
-        pass
-
-    recurrence = 0
-    try:
-        from shared.proposal_bus import get_recurrence_count
-        recurrence = get_recurrence_count(sub.title)
-    except Exception:
-        pass
-
-    recurrence_note = f" Recurrence: {recurrence}x." if recurrence > 1 else ""
-    plan_summary = (
-        f"Category: {sub.category}. Executor: {sub.executor}. "
-        f"Action: {sub.proposed_action}. Result: {final_state}.{recurrence_note}"
-    )
-    memory.save_episode(task=f"[PROPOSAL] {sub.title}", plan_summary=plan_summary,
-                        context=TaskContext(), success=success)
-    _bb_log(f"proposal_{final_state}", {
-        "proposal_id": sub.proposal_id, "title": sub.title,
-        "category": sub.category, "executor": sub.executor, "priority": sub.priority,
-    }, source="orchestrator")
-
-
-async def _execute_watchtower_proposal(sub: ProposalSubmission) -> Dict:
-    svc_name = sub.executor_meta.get("service_name")
-    result_data = None
-    if svc_name:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{WATCHTOWER_CRON_URL}/restart/{svc_name}", timeout=30) as resp:
-                    result_data = await resp.json()
-        except Exception as e:
-            result_data = {"success": False, "error": str(e)}
-    else:
-        result_data = {"success": False, "error": "No service_name in executor_meta"}
-
-    success = result_data.get("success", False)
-    new_state = "completed" if success else "failed"
-    await _finalize_proposal(sub, new_state, result_data)
-    return {"success": success, "result": result_data, "state": new_state}
-
-
-async def _execute_code_proposal(sub: ProposalSubmission) -> Dict:
-    priority_map = {9: TaskPriority.URGENT, 8: TaskPriority.URGENT,
-                    7: TaskPriority.NORMAL, 6: TaskPriority.NORMAL,
-                    5: TaskPriority.NORMAL, 4: TaskPriority.NORMAL,
-                    3: TaskPriority.BACKGROUND, 2: TaskPriority.BACKGROUND,
-                    1: TaskPriority.BACKGROUND}
-    priority = priority_map.get(sub.priority, TaskPriority.NORMAL)
-    task_id = task_queue.submit(
-        query=f"[PROPOSAL] {sub.title}: {sub.proposed_action}",
-        priority=priority, intent="execute",
-    )
-    _proposal_task_map[task_id] = {
-        "proposal_id": sub.proposal_id, "title": sub.title,
-        "category": sub.category, "executor": sub.executor, "priority": sub.priority,
-    }
-    return {"success": True, "queued": True, "task_id": task_id, "priority": priority.name.lower()}
-
-
-async def _execute_manual_proposal(sub: ProposalSubmission) -> Dict:
-    await _finalize_proposal(sub, "completed", {"acknowledged": True})
-    return {"success": True, "state": "completed", "message": "Manual proposal acknowledged"}
+    return await handle_proposal(submission, task_queue, WATCHTOWER_CRON_URL)
 
 
 # =====================================================
@@ -380,25 +285,45 @@ async def _execute_query(query: str, intent: str = "execute_explain") -> dict:
         result = await _dispatch_to_worker(plan_data, query)
 
         if result.get("success"):
+            summary_text = result.get("summary", "")[:500]
             memory.save_episode(
-                task=query, plan_summary=result.get("summary", "")[:500],
+                task=query, plan_summary=summary_text,
                 context=TaskContext(), success=True,
                 plan_steps=plan, execution_results=result.get("results", []),
             )
+            # Auto-extract skills from successful episodes
+            try:
+                from shared.skill_extractor import extract_skill_from_episode, add_skill
+                # Build code artifacts from results
+                artifacts = {}
+                for step, res in zip(plan, result.get("results", [])):
+                    r = res.get("result", {}) if isinstance(res, dict) else {}
+                    s = step if isinstance(step, dict) else {}
+                    if s.get("action") in ("write_file", "patch_file") and r.get("success"):
+                        artifacts[s.get("details", "unknown")] = s.get("content", "")
+                skill = extract_skill_from_episode(
+                    task_query=query, plan_summary=summary_text,
+                    code_artifacts=artifacts if artifacts else None,
+                )
+                if skill:
+                    add_skill(skill)
+                    logger.info(f"SKILL: Extracted '{skill['name']}' from successful task")
+            except Exception:
+                pass  # Skill extraction is optional
             return result
 
-        error_msg = result.get("error", "") or result.get("summary", "")
+        error_msg = _redact(result.get("error", "") or result.get("summary", ""))
         if _is_retryable(error_msg) and attempt < MAX_RETRIES:
-            last_error = _redact(error_msg[:200])
+            last_error = error_msg[:200]
             continue
 
         memory.save_episode(
-            task=query, plan_summary=_redact(error_msg[:300]),
+            task=query, plan_summary=error_msg[:300],
             context=TaskContext(), success=False,
         )
         return result
 
-    return {"success": False, "error": f"Max retries exceeded. Last: {_redact(last_error or 'unknown')}"}
+    return {"success": False, "error": f"Max retries exceeded. Last: {last_error or 'unknown'}"}
 
 
 async def _queue_executor(task: QueuedTask) -> dict:
@@ -416,16 +341,16 @@ async def _queue_executor(task: QueuedTask) -> dict:
         # Synthesize natural response
         response_text = await synthesize_response(
             original_request=query, intent=intent, success=success,
-            summary=summary, errors=result.get("error", ""),
+            summary=summary, errors=_redact(result.get("error", "")),
         )
         add_assistant_message(response_text, intent=intent, executed=True)
 
         # Voice notification
         try:
             if success:
-                await _roux.task_complete(agent="worker", summary=summary[:100])
+                await _roux.task_complete(agent="worker", summary=_redact(summary[:100]))
             else:
-                await _roux.task_failed(agent="worker", error=result.get("error", "")[:100])
+                await _roux.task_failed(agent="worker", error=_redact(result.get("error", "")[:100]))
         except Exception:
             pass
 
@@ -433,15 +358,15 @@ async def _queue_executor(task: QueuedTask) -> dict:
         if task.id in _proposal_task_map:
             prop_info = _proposal_task_map.pop(task.id)
             sub = ProposalSubmission(**prop_info, description="", proposed_action=query)
-            await _finalize_proposal(sub, "completed" if success else "failed")
+            await finalize_proposal(sub, "completed" if success else "failed", WATCHTOWER_CRON_URL)
 
         complete_task(success, summary[:100] if summary else None)
         return result
 
     except Exception as e:
-        error_str = str(e)
+        error_str = _redact(str(e))
         logger.error(f"Queue executor error: {error_str}")
-        add_assistant_message(f"Sorry, something went wrong: {_redact(error_str[:200])}")
+        add_assistant_message(f"Sorry, something went wrong: {error_str[:200]}")
         complete_task(False)
         return {"success": False, "error": error_str}
 

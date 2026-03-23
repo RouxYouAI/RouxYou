@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from pathlib import Path
 from collections import defaultdict
 from .schemas import EpisodicMemory, SkillRecord, TaskContext
+from .redact import redact as _shared_redact
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -76,16 +77,8 @@ class MemorySystem:
         else:
             print("MEMORY: No existing memory found. Starting fresh.")
 
-    _CRED_PATTERNS = [
-        re.compile(r'(?i)(TOKEN|PASSWORD|SECRET|API_KEY|APIKEY|AUTH|CREDENTIAL|PRIVATE_KEY)\s*[=:]\s*\S+'),
-        re.compile(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*'),
-        re.compile(r'(?<=[=:\s])[A-Za-z0-9+/\-._]{40,}={0,3}'),
-    ]
-
     def _redact(self, text: str) -> str:
-        for p in self._CRED_PATTERNS:
-            text = p.sub("[REDACTED]", text)
-        return text
+        return _shared_redact(text)
 
     def save_episode(self, task: str, plan_summary: str, context: TaskContext, success: bool,
                      plan_steps: list = None, execution_results: list = None):

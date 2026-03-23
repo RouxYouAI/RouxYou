@@ -97,3 +97,9 @@ auto_approve:
   enabled: false
   daily_limit: 10
   min_confidence: 0.8
+
+# --- Per-Task Rate Limits ---
+# Prevents runaway tasks from hammering the system.
+rate_limits:
+  max_steps_per_task: 20      # Max steps in a single task plan
+  max_commands_per_task: 10   # Max shell commands per task (prevents CPU loops)

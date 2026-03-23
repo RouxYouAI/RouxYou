@@ -30,6 +30,7 @@ from shared.lifecycle import register_process
 from shared.logger import get_logger
 from shared.activity import set_thought, set_step, set_active_task
 from shared.search import web_search
+from shared.trace import set_trace_id, HEADER_NAME as TRACE_HEADER
 from config import CONFIG
 
 logger = get_logger("worker")
@@ -50,16 +51,7 @@ SAFE_PATHS = [
 # --- SECURITY ---
 SENSITIVE_FILES = {".env", ".env.local", ".env.production", ".env.secret"}
 
-CREDENTIAL_PATTERNS = [
-    re.compile(r'(?i)(TOKEN|PASSWORD|SECRET|API_KEY|APIKEY|AUTH|CREDENTIAL|PRIVATE_KEY)\s*[=:]\s*\S+'),
-    re.compile(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*'),
-    re.compile(r'(?<=[=:\s])[A-Za-z0-9+/\-._]{40,}={0,3}'),
-]
-
-def redact_credentials(text: str) -> str:
-    for pattern in CREDENTIAL_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
+from shared.redact import redact as redact_credentials, redact_dict
 
 
 class SuperWorker:
@@ -107,7 +99,7 @@ class SuperWorker:
     }
 
     async def execute_step(self, step: Step, context: TaskContext) -> Dict[str, Any]:
-        self.logger.info(f"Step {step.id}: {step.action} [{step.details[:50]}...]")
+        self.logger.info(f"Step {step.id}: {step.action} [{redact_credentials(step.details[:50])}...]")
 
         try:
             # --- IMMUTABLE FILE CHECK ---
@@ -465,9 +457,18 @@ class SuperWorker:
         context_data = data.get("initial_context")
         current_context = TaskContext(**context_data) if context_data else TaskContext()
 
+        # Per-step rate limiting
+        MAX_STEPS_PER_TASK = CONFIG.MAX_STEPS_PER_TASK if hasattr(CONFIG, 'MAX_STEPS_PER_TASK') else 20
+        MAX_COMMANDS_PER_TASK = CONFIG.MAX_COMMANDS_PER_TASK if hasattr(CONFIG, 'MAX_COMMANDS_PER_TASK') else 10
+
+        if len(raw_plan) > MAX_STEPS_PER_TASK:
+            self.logger.warning(f"Plan has {len(raw_plan)} steps, capping at {MAX_STEPS_PER_TASK}")
+            raw_plan = raw_plan[:MAX_STEPS_PER_TASK]
+
         results = []
         success_count = 0
         last_error = None
+        command_count = 0
         total_steps = len(raw_plan)
         _read_file_cache = {}
 
@@ -477,7 +478,7 @@ class SuperWorker:
             try:
                 step = Step(**step_dict) if isinstance(step_dict, dict) else step_dict
                 step_num = idx + 1
-                action_desc = f"{step.action}: {step.details[:50]}..."
+                action_desc = f"{step.action}: {redact_credentials(step.details[:50])}..."
                 set_step(step_num, f"Step {step_num}/{total_steps}: {action_desc}")
 
                 # Anchor auto-correction using cached file content
@@ -503,6 +504,19 @@ class SuperWorker:
                                     self.logger.info("Anchor auto-corrected: quote normalization")
                             break
 
+                # Per-task command rate limit
+                if step.action == "run_command":
+                    command_count += 1
+                    if command_count > MAX_COMMANDS_PER_TASK:
+                        result = {
+                            "success": False,
+                            "error": f"RATE LIMIT: Task exceeded {MAX_COMMANDS_PER_TASK} shell commands. "
+                                     "Break this into smaller tasks."
+                        }
+                        results.append({"step": step.id, "action": step.action, "result": redact_dict(result)})
+                        last_error = result["error"]
+                        break
+
                 result = await self.execute_step(step, current_context)
 
                 if step.action == "read_file" and result.get("success") and result.get("content"):
@@ -512,12 +526,12 @@ class SuperWorker:
                 if step.action == "verify_fix" and result.get("success"):
                     current_context.verified = True
 
-                results.append({"step": step.id, "action": step.action, "result": result})
+                results.append({"step": step.id, "action": step.action, "result": redact_dict(result)})
 
                 if result.get("success"):
                     success_count += 1
                 else:
-                    last_error = result.get("error") or result.get("output") or "Step failed"
+                    last_error = redact_credentials(result.get("error") or result.get("output") or "Step failed")
                     if step.action != "verify_fix":
                         break
 
@@ -549,7 +563,7 @@ class SuperWorker:
             success=is_success,
             summary=full_summary,
             results=results,
-            error=last_error,
+            error=redact_credentials(last_error) if last_error else None,
             final_context=current_context
         ).model_dump()
 
@@ -573,6 +587,21 @@ _start_time = _time.time()
 PORT = CONFIG.PORT_WORKER
 
 app = FastAPI(title="RouxYou Worker")
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        trace_id = request.headers.get(TRACE_HEADER, "")
+        if trace_id:
+            set_trace_id(trace_id)
+        response = await call_next(request)
+        if trace_id:
+            response.headers[TRACE_HEADER] = trace_id
+        return response
+
+app.add_middleware(TraceMiddleware)
 worker = SuperWorker()
 
 

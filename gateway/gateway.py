@@ -24,6 +24,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.lifecycle import register_process
 from shared.logger import get_logger
+from shared.trace import generate_trace_id, HEADER_NAME as TRACE_HEADER
 from config import CONFIG
 
 logger = get_logger("gateway")
@@ -110,6 +111,9 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     if query_string:
         target += f"?{query_string}"
 
+    # Generate or propagate trace ID
+    trace_id = request.headers.get(TRACE_HEADER) or generate_trace_id()
+
     skip_headers = {
         "host", "transfer-encoding", "connection", "keep-alive",
         "proxy-authenticate", "proxy-authorization", "te", "trailer", "upgrade",
@@ -117,6 +121,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     headers = {k: v for k, v in request.headers.items() if k.lower() not in skip_headers}
     headers["X-Forwarded-For"] = request.remote or "unknown"
     headers["X-Forwarded-Host"] = request.host
+    headers[TRACE_HEADER] = trace_id
 
     body = await request.read() if request.can_read_body else None
 
@@ -126,10 +131,12 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             method=request.method, url=target, headers=headers,
             data=body, allow_redirects=False,
         ) as backend_resp:
+            resp_headers = {k: v for k, v in backend_resp.headers.items()
+                           if k.lower() not in skip_headers}
+            resp_headers[TRACE_HEADER] = trace_id
             response = web.StreamResponse(
                 status=backend_resp.status,
-                headers={k: v for k, v in backend_resp.headers.items()
-                         if k.lower() not in skip_headers},
+                headers=resp_headers,
             )
             await response.prepare(request)
             async for chunk in backend_resp.content.iter_any():

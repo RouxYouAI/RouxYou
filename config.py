@@ -99,5 +99,10 @@ class _Config:
     AUTO_APPROVE_DAILY_LIMIT = _aa.get("daily_limit", 10)
     AUTO_APPROVE_MIN_CONF   = _aa.get("min_confidence", 0.8)
 
+    # Per-task rate limits
+    _rate = _raw.get("rate_limits", {})
+    MAX_STEPS_PER_TASK    = _rate.get("max_steps_per_task", 20)
+    MAX_COMMANDS_PER_TASK = _rate.get("max_commands_per_task", 10)
+
 
 CONFIG = _Config()

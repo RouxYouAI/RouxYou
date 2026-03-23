@@ -23,10 +23,11 @@ from shared.memory import memory
 from shared.codebase_index import codebase_index
 from shared.logger import get_logger
 from shared.activity import set_thought, set_plan as broadcast_plan
+from shared.trace import set_trace_id, HEADER_NAME as TRACE_HEADER
 from config import CONFIG
 
 try:
-    from skill_extractor import get_skills_for_task, format_skills_for_prompt
+    from shared.skill_extractor import get_skills_for_task, format_skills_for_prompt
     SKILLS_AVAILABLE = True
 except ImportError:
     SKILLS_AVAILABLE = False
@@ -62,6 +63,21 @@ When using run_command:
 OLLAMA_CHAT_URL = f"{CONFIG.OLLAMA_HOST}/api/chat"
 
 app = FastAPI(title="RouxYou Coder")
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        trace_id = request.headers.get(TRACE_HEADER, "")
+        if trace_id:
+            set_trace_id(trace_id)
+        response = await call_next(request)
+        if trace_id:
+            response.headers[TRACE_HEADER] = trace_id
+        return response
+
+app.add_middleware(TraceMiddleware)
 
 
 @app.get("/health")
