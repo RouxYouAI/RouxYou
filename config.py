@@ -105,4 +105,24 @@ class _Config:
     MAX_COMMANDS_PER_TASK = _rate.get("max_commands_per_task", 10)
 
 
+    # --- Secret fields that must never appear in logs or dumps ---
+    _SECRET_FIELDS = {"HA_TOKEN", "ANTHROPIC_API_KEY", "REMOTE_SERVER_PASSWORD"}
+
+    def to_dict(self) -> dict:
+        """Safe serialization — masks secret fields so CONFIG can be logged without leaks."""
+        result = {}
+        for key in dir(self):
+            if key.startswith("_") or callable(getattr(self, key)):
+                continue
+            val = getattr(self, key)
+            if key in self._SECRET_FIELDS:
+                result[key] = "***MASKED***" if val else "(not set)"
+            else:
+                result[key] = str(val) if isinstance(val, Path) else val
+        return result
+
+    def __repr__(self):
+        return f"<Config {self.to_dict()}>"
+
+
 CONFIG = _Config()

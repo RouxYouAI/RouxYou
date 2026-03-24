@@ -101,8 +101,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     resolved = routes.resolve(path)
     if not resolved:
         return web.json_response(
-            {"error": f"No route for path: {path}",
-             "available_prefixes": list(routes._routes.keys())},
+            {"error": f"No route for path: {path}"},
             status=404,
         )
 
@@ -146,12 +145,14 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
 
     except aiohttp.ClientConnectorError:
         svc = path.split("/")[1] if "/" in path else "unknown"
-        return web.json_response({"error": f"Backend unreachable: {svc}", "target": target}, status=502)
+        logger.warning(f"Backend unreachable: {svc} (target: {target})")
+        return web.json_response({"error": f"Backend unreachable: {svc}"}, status=502)
     except asyncio.TimeoutError:
-        return web.json_response({"error": "Backend timeout", "target": target}, status=504)
+        logger.warning(f"Backend timeout (target: {target})")
+        return web.json_response({"error": "Backend timeout"}, status=504)
     except Exception as e:
-        logger.error(f"Proxy error: {e}")
-        return web.json_response({"error": f"Proxy error: {str(e)}"}, status=500)
+        logger.error(f"Proxy error: {e} (target: {target})")
+        return web.json_response({"error": "Internal proxy error"}, status=500)
 
 
 async def gateway_health(request: web.Request) -> web.Response:

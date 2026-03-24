@@ -22,6 +22,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CONFIG
 
+from shared.redact import redact as _redact, redact_dict as _redact_dict
+
 logger = logging.getLogger("roux_client")
 
 ROUX_URL = f"http://localhost:{CONFIG.PORT_ROUX}"
@@ -76,12 +78,12 @@ class RouxClient:
             "source": source,
             "event_type": event_type,
             "priority": priority,
-            "data": data or {},
-            "message": message,
+            "data": _redact_dict(data) if data else {},
+            "message": _redact(message) if message else None,
         })
 
     async def say(self, text: str, priority: str = "normal"):
-        return await _post("/speak", {"text": text, "priority": priority})
+        return await _post("/speak", {"text": _redact(text), "priority": priority})
 
     async def task_complete(self, agent: str = "system", summary: str = ""):
         return await self.event("orchestrator", "task_complete",
