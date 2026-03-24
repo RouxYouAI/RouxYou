@@ -69,7 +69,14 @@ class SuperWorker:
             target = Path(os.getcwd()) / file_path
         else:
             target = Path(file_path)
-        return target.resolve()
+        resolved = target.resolve()
+        # Enforce SAFE_PATHS boundary — prevent path traversal outside project
+        if SAFE_PATHS and not any(str(resolved).startswith(str(sp)) for sp in SAFE_PATHS):
+            raise PermissionError(
+                f"Path outside safe boundary: {resolved}. "
+                f"Allowed roots: {[str(sp) for sp in SAFE_PATHS]}"
+            )
+        return resolved
 
     # Files that can NEVER be modified by the agent
     IMMUTABLE_FILES = {"watchtower.py", "lifecycle.py"}
@@ -651,4 +658,4 @@ async def handle_message(msg: Dict = Body(...)):
 if __name__ == "__main__":
     register_process("worker")
     logger.info(f"Starting Worker on port {PORT}...")
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

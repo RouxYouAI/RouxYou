@@ -738,7 +738,7 @@ async def run_loop():
 
 async def start_api_server():
     """Run the FastAPI server alongside the main loop"""
-    config = uvicorn.Config(wt_app, host="0.0.0.0", port=WATCHTOWER_PORT, log_level="warning")
+    config = uvicorn.Config(wt_app, host="127.0.0.1", port=WATCHTOWER_PORT, log_level="warning")
     server = uvicorn.Server(config)
     await server.serve()
 

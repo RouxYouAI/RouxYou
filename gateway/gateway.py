@@ -216,7 +216,7 @@ def main():
         logger.info(f"  {prefix:10s} → :{backend['port']} ({backend['name']})")
     register_process("gateway")
     app = create_app()
-    web.run_app(app, host="0.0.0.0", port=GATEWAY_PORT, print=None)
+    web.run_app(app, host="127.0.0.1", port=GATEWAY_PORT, print=None)
 
 
 if __name__ == "__main__":

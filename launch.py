@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -143,9 +144,9 @@ YELLOW = "\033[93m"
 RESET  = "\033[0m"
 BOLD   = "\033[1m"
 
-def ok(msg):    print(f"  {GREEN}✓{RESET} {msg}")
-def err(msg):   print(f"  {RED}✗{RESET} {msg}")
-def warn(msg):  print(f"  {YELLOW}!{RESET} {msg}")
+def ok(msg):    print(f"  {GREEN}[OK]{RESET} {msg}")
+def err(msg):   print(f"  {RED}[FAIL]{RESET} {msg}")
+def warn(msg):  print(f"  {YELLOW}[WARN]{RESET} {msg}")
 def info(msg):  print(f"  {msg}")
 
 
@@ -197,7 +198,7 @@ def launch_service(svc: dict) -> subprocess.Popen:
     if IS_WINDOWS:
         title     = svc["name"]
         cmd_str   = " ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd)
-        full_cmd  = f'start "{title}" cmd /k "cd /d {cwd} && {cmd_str}"'
+        full_cmd  = f'start "{title}" cmd /c "cd /d {cwd} && {cmd_str}"'
         proc = subprocess.Popen(full_cmd, shell=True, cwd=cwd)
     else:
         log_dir  = PROJECT_ROOT / "logs"
@@ -257,6 +258,43 @@ def check_preflight() -> bool:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Process tracking & cleanup
+# ---------------------------------------------------------------------------
+_spawned_procs: list[subprocess.Popen] = []
+
+
+def shutdown_all():
+    """Kill all spawned service processes (and their process trees on Windows)."""
+    if not _spawned_procs:
+        return
+    print(f"\n{YELLOW}Shutting down services...{RESET}")
+    for proc in _spawned_procs:
+        try:
+            if IS_WINDOWS:
+                # /T = tree kill (kills cmd window + child python process)
+                # /F = force
+                subprocess.run(
+                    f"taskkill /F /T /PID {proc.pid}",
+                    shell=True, capture_output=True
+                )
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+    _spawned_procs.clear()
+    print(f"{GREEN}All services stopped.{RESET}\n")
+
+
+def _signal_handler(sig, frame):
+    shutdown_all()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Launch RouxYou services")
@@ -319,7 +357,8 @@ def main():
         print(f"  [{svc['key']:12s}]  {svc['name']:<20s}", end="", flush=True)
 
         try:
-            launch_service(svc)
+            proc = launch_service(svc)
+            _spawned_procs.append(proc)
         except Exception as e:
             print(f"  {RED}LAUNCH ERROR: {e}{RESET}")
             if not optional:
@@ -337,11 +376,11 @@ def main():
                 if health_path and not svc.get("streamlit"):
                     time.sleep(0.5)
                     if http_ok(svc["port"], health_path):
-                        print(f"  {GREEN}✓ :{svc['port']}{RESET}")
+                        print(f"  {GREEN}[OK] :{svc['port']}{RESET}")
                     else:
                         print(f"  {YELLOW}port open, health pending :{svc['port']}{RESET}")
                 else:
-                    print(f"  {GREEN}✓ :{svc['port']}{RESET}")
+                    print(f"  {GREEN}[OK] :{svc['port']}{RESET}")
                 break
             time.sleep(1)
         else:
@@ -363,7 +402,14 @@ def main():
         print(f"{GREEN}{BOLD}All services started successfully.{RESET}")
         if not args.no_dash:
             print(f"\nDashboard: {GREEN}http://localhost:8501{RESET}")
-        print()
+        print(f"\n{BOLD}Press Ctrl+C to stop all services.{RESET}\n")
+
+        # Keep launcher alive so Ctrl+C triggers clean shutdown
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            shutdown_all()
 
 
 if __name__ == "__main__":

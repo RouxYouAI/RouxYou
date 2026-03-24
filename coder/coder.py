@@ -99,6 +99,9 @@ def _check_search_available() -> bool:
 
 def _build_system_prompt(memories: List[Any] = [], query: str = "") -> str:
     """Build the Coder system prompt with injected memories, skills, and architecture."""
+    from datetime import date
+    _today = date.today().isoformat()
+    _year = date.today().year
 
     search_online = _check_search_available()
     search_provider = CONFIG.SEARCH_PROVIDER
@@ -171,6 +174,10 @@ UNCERTAINTY IS VALID OUTPUT:
 - If you cannot safely accomplish a task, return: {{"success": false, "error": "Insufficient context — <what is needed>"}}
 - A plan that admits uncertainty is recoverable. A hallucinated plan that executes is a production incident.
 
+## CURRENT DATE
+Today is: {_today}
+Use this date when constructing search queries. NEVER search for years before {_year} unless the user specifically asks for historical data.
+
 ## DEFAULT WORKING DIRECTORY (CRITICAL)
 The project root for ALL tasks is: {PROJECT_ROOT}
 
@@ -200,6 +207,14 @@ Current status: {search_status}
 {search_note}
 NEVER use web_search as a fallback for tasks you don't understand.
 If a task is unclear, return {{"success": false}} with a clear error message.
+
+CRITICAL — ANTI-HALLUCINATION FOR SEARCH:
+- If search is OFFLINE, DISABLED, or UNAVAILABLE: do NOT include web_search steps in your plan.
+- If the user's task REQUIRES live web data and search is unavailable, return:
+  {{"success": false, "error": "Web search is currently unavailable ({search_status}). Cannot retrieve live data."}}
+- NEVER fabricate search results, URLs, article titles, or news headlines.
+- NEVER present cached, memorized, or imagined web content as real search results.
+- An honest "I can't do this right now" is always better than a convincing lie.
 
 ## CREDENTIALS (SECURE)
 Credentials live in `.env` at project root. NEVER read/write the .env file directly.
@@ -509,4 +524,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

@@ -262,14 +262,21 @@ def observe_task_patterns(tracker: ProposalTracker) -> List[Proposal]:
 
     if len(recent_failures) >= TASK_FAILURE_STREAK:
         errors = [t.get("error", "")[:100] for t in recent_failures if t.get("error")]
+        error_summary = "; ".join(errors[:3]) if errors else "unknown errors"
         title = f"High failure rate: {len(recent_failures)} tasks failed in last 24h"
         if not tracker.already_proposed(title):
             proposals.append(Proposal(
                 title=title,
                 description=f"{len(recent_failures)} of {len(recent)} recent tasks failed. "
-                            f"Errors: {'; '.join(errors[:3])}",
+                            f"Errors: {error_summary}",
                 category="tasks", priority=7,
-                proposed_action="Analyze failure patterns, check Worker/Coder logs",
+                proposed_action=(
+                    f"Investigate task failures using read_file (NOT run_command) to read logs/worker.log "
+                    f"and logs/coder.log. "
+                    f"Known errors: {error_summary}. "
+                    f"After reading the logs, use write_file to save your analysis to logs/failure_analysis.txt "
+                    f"containing: (1) root cause, (2) affected tasks, (3) recommended fix."
+                ),
                 evidence=f"Failed: {len(recent_failures)}/{len(recent)} in last 24h",
             ))
 
@@ -385,6 +392,69 @@ def observe_skills(tracker: ProposalTracker) -> List[Proposal]:
     return proposals
 
 
+def observe_capabilities(tracker: ProposalTracker) -> List[Proposal]:
+    """Detect missing or broken capabilities and propose fixes."""
+    proposals = []
+
+    # Check web search
+    try:
+        from shared.search import search_available
+        from shared.config import CONFIG
+        provider = CONFIG.SEARCH_PROVIDER.lower()
+
+        if provider == "none":
+            title = "Web search not configured"
+            if not tracker.already_proposed(title):
+                proposals.append(Proposal(
+                    title=title,
+                    description="Web search provider is set to 'none'. Users asking for web info will get errors.",
+                    category="resources", priority=5,
+                    proposed_action="Configure web search: set search.provider to 'duckduckgo' or 'searxng' in config.yaml, "
+                                   "then install the provider (pip install duckduckgo-search or deploy SearXNG container)",
+                    evidence="config.yaml search.provider = 'none'",
+                ))
+        elif not search_available():
+            title = f"Web search offline ({provider})"
+            if not tracker.already_proposed(title):
+                if provider == "duckduckgo":
+                    action = "Install or update DDG: pip install -U duckduckgo-search. Check network connectivity."
+                    evidence = "duckduckgo-search probe returned 0 results"
+                elif provider == "searxng":
+                    action = f"Verify SearXNG is running at {CONFIG.SEARXNG_URL}. Check container status."
+                    evidence = f"SearXNG not reachable at {CONFIG.SEARXNG_URL}"
+                else:
+                    action = f"Unknown provider '{provider}' — set to 'duckduckgo' or 'searxng' in config.yaml"
+                    evidence = f"Unrecognized provider: {provider}"
+                proposals.append(Proposal(
+                    title=title,
+                    description=f"Web search is configured ({provider}) but not returning results. "
+                                "Search-dependent tasks will fail or produce errors.",
+                    category="resources", priority=6,
+                    proposed_action=action,
+                    evidence=evidence,
+                ))
+    except Exception:
+        pass
+
+    # Check Home Assistant
+    try:
+        from shared.config import CONFIG
+        if CONFIG.HA_URL and not CONFIG.HA_TOKEN:
+            title = "Home Assistant URL set but token missing"
+            if not tracker.already_proposed(title):
+                proposals.append(Proposal(
+                    title=title,
+                    description="HA URL is configured but HA_TOKEN is not set in .env. HA commands will fail.",
+                    category="resources", priority=4,
+                    proposed_action="Set HA_TOKEN in .env with a valid long-lived access token from Home Assistant",
+                    evidence=f"HA URL: {CONFIG.HA_URL}, HA_TOKEN: not set",
+                ))
+    except Exception:
+        pass
+
+    return proposals
+
+
 ALL_OBSERVERS = [
     ("health", observe_health),
     ("memory", observe_memory),
@@ -392,6 +462,7 @@ ALL_OBSERVERS = [
     ("tasks", observe_task_patterns),
     ("resources", observe_resources),
     ("skills", observe_skills),
+    ("capabilities", observe_capabilities),
 ]
 
 

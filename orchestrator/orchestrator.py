@@ -338,11 +338,32 @@ async def _queue_executor(task: QueuedTask) -> dict:
         success = result.get("success", False)
         summary = result.get("summary", "")
 
-        # Synthesize natural response
-        response_text = await synthesize_response(
-            original_request=query, intent=intent, success=success,
-            summary=summary, errors=_redact(result.get("error", "")),
-        )
+        # Check if this was a search task — if so, format results directly (no LLM synthesis)
+        search_results_text = ""
+        raw_results = result.get("results", [])
+        for step_result in raw_results:
+            r = step_result.get("result", {}) if isinstance(step_result, dict) else {}
+            if isinstance(r, dict) and r.get("results"):
+                for sr in r["results"][:5]:
+                    if isinstance(sr, dict) and sr.get("title"):
+                        search_results_text += f"- **{sr.get('title', '')}**\n"
+                        snippet = sr.get("snippet") or sr.get("body") or ""
+                        if snippet:
+                            search_results_text += f"  {snippet[:200]}\n"
+                        url = sr.get("url") or sr.get("href") or ""
+                        if url:
+                            search_results_text += f"  {url}\n"
+                        search_results_text += "\n"
+
+        if search_results_text:
+            # Direct formatting — no LLM in the loop for search results
+            response_text = f"Here's what I found:\n\n{search_results_text}"
+        else:
+            # Normal synthesis for non-search tasks
+            response_text = await synthesize_response(
+                original_request=query, intent=intent, success=success,
+                summary=summary, errors=_redact(result.get("error", "")),
+            )
         add_assistant_message(response_text, intent=intent, executed=True)
 
         # Voice notification
@@ -502,4 +523,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

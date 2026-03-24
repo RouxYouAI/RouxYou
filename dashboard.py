@@ -839,8 +839,15 @@ def render_proposals_panel():
                         r = requests.post(f"{GATEWAY_URL}/orch/queue/proposal", json=orch_payload, timeout=30)
                         result = r.json()
                         if result.get("success"):
-                            if result.get("queued"): st.session_state["_proposal_approved"] = f"Queued as task #{result.get('task_id','?')}"
-                            elif result.get("state") == "completed": st.session_state["_proposal_approved"] = f"Completed!"
+                            if result.get("queued"): st.session_state["_proposal_approved"] = f"Queued as task #{result.get('task_id','?')} ({result.get('priority','?')} priority)"
+                            elif result.get("state") == "completed":
+                                r_data = result.get("result", {})
+                                detail = r_data.get("message", "") if isinstance(r_data, dict) else ""
+                                affected = r_data.get("affected", []) if isinstance(r_data, dict) else []
+                                parts = [f"Done: {detail}"] if detail else ["Completed"]
+                                if affected:
+                                    parts.append(f"Affected: {', '.join(a.get('title','?')[:40] for a in affected[:5])}")
+                                st.session_state["_proposal_approved"] = " | ".join(parts)
                             else: st.session_state["_proposal_approved"] = f"Approved: {p.get('title','')[:50]}"
                         else: st.session_state["_proposal_approved"] = f"⚠️ {result.get('error','Failed')}"
                     except requests.exceptions.ConnectionError: st.session_state["_proposal_approved"] = "❌ Orchestrator offline"

@@ -159,6 +159,8 @@ CRITICAL RULES:
 - NEVER invent or hallucinate data not in the execution results above
 - If status is "Failed": Say what went wrong and quote the actual error. NEVER pretend success.
 - If status is "Success": Report ONLY what is in the Summary and Content Created fields
+- If search results are empty or search failed: say "I couldn't find results — search may be offline or unconfigured." NEVER fabricate articles, URLs, headlines, or facts to fill the gap.
+- No asterisk actions like *leans in* or *winks* — be direct and conversational.
 
 Respond with ONLY the message to show the user:
 """
@@ -285,6 +287,16 @@ async def synthesize_response(
     content_preview: str = "",
     errors: str = ""
 ) -> str:
+    # --- HARD GUARDRAIL: failed search = honest answer, no LLM involved ---
+    if not success and errors:
+        err_lower = errors.lower()
+        if any(kw in err_lower for kw in ("web search", "search unavailable", "search is disabled", "search returned no results")):
+            return (
+                "I can't search the web right now — web search isn't configured or reachable on this system. "
+                "To enable it, set up SearXNG or install the duckduckgo-search package and verify it returns results. "
+                "In the meantime, I can only work with local files and tools."
+            )
+
     prompt = SYNTHESIS_PROMPT.format(
         capabilities=SYSTEM_CAPABILITIES,
         original_request=original_request,

@@ -135,6 +135,12 @@ def _infer_executor(category: str, title: str, proposed_action: str) -> str:
         return "task_action"
     if category == "tasks" and "review" in action_lower:
         return "task_action"
+    # Investigation/diagnosis proposals — route to coder pipeline for log analysis
+    if any(w in action_lower for w in ["analyze", "investigate", "diagnose", "check log", "read log", "inspect"]):
+        return "coder"
+    # Configuration fix proposals — route to worker for execution
+    if any(w in action_lower for w in ["configure", "install", "set up", "enable", "pip install"]):
+        return "worker"
     return "manual"
 
 

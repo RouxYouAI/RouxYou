@@ -107,6 +107,9 @@ async def _search_duckduckgo(query: str, max_results: int) -> List[Dict]:
                     from duckduckgo_search import DDGS
                 with DDGS() as ddgs:
                     hits = list(ddgs.text(query, max_results=max_results))
+                    if not hits:
+                        logger.warning(f"DDG returned 0 results for: {query}")
+                        return []
                     return [
                         {
                             "title": h.get("title", ""),
@@ -131,7 +134,8 @@ async def _search_duckduckgo(query: str, max_results: int) -> List[Dict]:
 
 
 def search_available() -> bool:
-    """Quick check — is web search configured and likely functional?"""
+    """Quick check — is web search configured and likely functional?
+    Actually tests a probe query to confirm real results come back."""
     provider = CONFIG.SEARCH_PROVIDER.lower()
     if provider == "none":
         return False
@@ -139,8 +143,17 @@ def search_available() -> bool:
         return bool(CONFIG.SEARXNG_URL)
     if provider == "duckduckgo":
         try:
-            import duckduckgo_search  # noqa
-            return True
-        except ImportError:
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                probe = list(ddgs.text("test", max_results=1))
+                if probe:
+                    return True
+                logger.warning("DDG search returned empty results — marking search as unavailable")
+                return False
+        except Exception as e:
+            logger.warning(f"DDG search probe failed: {e}")
             return False
     return False
