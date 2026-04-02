@@ -1,105 +1,103 @@
-# ============================================================
-# RouxYou — Configuration Template
-# Copy this file to config.yaml and fill in your values.
-# config.yaml is excluded from git — never commit it.
-# ============================================================
+# RouxYou — Configuration
+# Copy to config.yaml and customize for your setup
+# Last updated: April 2, 2026
 
-# --- Paths ---
-# Absolute path to the root of your RouxYou installation.
-# On Windows: C:/Users/yourname/Desktop/RouxYou_Public
-# On Linux/Mac: /home/yourname/rouxyou
-base_dir: "C:/Users/YOUR_USERNAME/Desktop/RouxYou_Public"
+base_dir: ""  # Auto-detected if blank
 
-# --- Ports ---
-# Change these if you have conflicts on your machine.
 ports:
   gateway: 8000
   orchestrator: 8001
   coder: 8002
   worker: 8003
   memory: 8004
+  scheduler: 8005
   watchtower_supervisor: 8010
   rag_api: 8011
   watchtower_cron: 8012
   roux_voice: 8014
   dashboard: 8501
-  # Staging ports used during blue-green deploys
   staging_orchestrator: 9001
   staging_coder: 9002
   staging_worker: 9003
 
-# --- Ollama / LLM ---
+# LLM Configuration (Phase 34)
 ollama_host: "http://localhost:11434"
 models:
-  router: "ministral:3b"          # Fast routing model (~3B params)
-  reasoning: "qwen3:14b-q4_K_M"   # Deep reasoning / code gen (~14B params)
-  embeddings: "nomic-embed-text"   # Embeddings for RAG
+  router: "ministral-3:8b"
+  reasoning: "qwen3:14b-q4_K_M"
+  embeddings: "nomic-embed-text"
 
-# --- Home Assistant (optional) ---
-# Remove or leave blank if you're not using HA integration.
+llm:
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"
+      default: true
+    vllm:
+      base_url: ""  # Set to your vLLM server URL
+      enabled: false
+    claude:
+      # API key loaded from .env (ANTHROPIC_API_KEY)
+      enabled: false
+  aliases:
+    router: "ollama/ministral-3:8b"
+    coder: "ollama/qwen3:14b-q4_K_M"
+    companion: "ollama/ministral-3:8b"
+    coach: "ollama/qwen3:14b-q4_K_M"
+    researcher: "ollama/qwen3:14b-q4_K_M"
+    embeddings: "ollama/nomic-embed-text"
+    bigbrain: "claude/claude-sonnet-4-6"
+
+# Home Assistant (optional)
 home_assistant:
-  url: "http://YOUR_HA_IP:8123"
-  # Token goes in .env as HA_TOKEN
+  url: ""
 
-# --- Remote Server (optional) ---
-# For monitoring a hypervisor or remote machine (e.g. Proxmox, TrueNAS, bare-metal node).
-# Remove or leave blank if you don't have one.
+# Remote Server (optional)
 remote_server:
-  host: "YOUR_SERVER_IP"       # e.g. 192.168.1.100 (Proxmox host, NAS, etc.)
-  user: "root@pam"             # SSH or API user
-  # Password goes in .env as REMOTE_SERVER_PASSWORD
+  host: ""
+  user: ""
 
-# --- Search ---
-# Choose your web search provider:
-#   "searxng"     — Self-hosted SearXNG (privacy-first, recommended)
-#   "duckduckgo"  — No setup required, uses ddgs library (pip install ddgs)
-#   "none"        — Disable web search entirely
+# Search
 search:
-  provider: "duckduckgo"   # Start here — no setup needed
-  searxng_url: ""          # Set this if provider is "searxng", e.g. http://192.168.1.x:8888
+  provider: "duckduckgo"
+  searxng_url: ""  # Set to your SearXNG instance URL
 
-# --- TTS (Text-to-Speech for Roux voice) ---
-# "kitten"  — Self-hosted Kitten TTS (https://github.com/thwiki/koe)
-#             Privacy-first, runs on your LAN. Requires a separate server.
-# "none"    — Disable audio output entirely. Roux runs text-only.
-#             Voice endpoints still work for text-in/text-out.
-#
-# TO SET UP KITTEN TTS:
-#   1. Clone and run: https://github.com/thwiki/koe
-#   2. Set kitten_url to http://<your-server-ip>:5100
-#   3. Set provider to "kitten"
+# TTS (optional — set provider to "kitten" or "piper")
 tts:
-  provider: "none"      # Start here — no setup needed
-  kitten_url: ""        # e.g. http://192.168.1.x:5100
-  voice: "en_US-amy-medium"   # Voice model name on your Kitten server
-  speed: 1.0                  # Playback speed multiplier
+  provider: "none"
+  voice: "en_US-amy-medium"
+  speed: 1.0
 
-# --- Voice (Roux) ---
+# Voice (optional — requires mic + Whisper)
 voice:
-  enabled: false         # Set to true after installing Whisper + Piper
-  # Path to your Piper TTS executable
+  enabled: false
   piper_executable: "piper"
-  # Voice model file (relative to base_dir or absolute)
   voice_model: "voices/en_GB-cori-medium.onnx"
-  # Whisper STT model
   whisper_model: "large-v3-turbo"
-  # Wake word (leave blank for always-on)
-  wake_word: ""
+  wake_word: "roux"
+  wake_word_alts: ["roux", "rue", "ru", "roo"]
+  # VAD tuning (Phase 29.4b)
+  vad:
+    aggressiveness: 2       # 0=permissive, 3=aggressive. 2 = sweet spot for clean mic.
+    silence_frames: 50      # Consecutive silent frames before stop (~1.5s at 30ms/frame)
+    min_speech_frames: 10   # Ignore blips shorter than this (~300ms)
+    awake_timeout_s: 30     # Seconds of silence before auto-sleep
 
-# --- Memory Decay ---
+# Memory decay (Phase 24)
 memory:
   age_half_life_days: 14
   min_utility: 0.15
   max_age_days: 60
 
-# --- Auto-Approve ---
+# Auto-approve (Phase 25.2)
 auto_approve:
   enabled: false
   daily_limit: 10
   min_confidence: 0.8
 
-# --- Per-Task Rate Limits ---
-# Prevents runaway tasks from hammering the system.
-rate_limits:
-  max_steps_per_task: 20      # Max steps in a single task plan
-  max_commands_per_task: 10   # Max shell commands per task (prevents CPU loops)
+# MCP Servers (Phase 38) — uncomment when needed
+# mcp:
+#   servers:
+#     filesystem:
+#       command: ["npx", "@anthropic/mcp-filesystem"]
+#       args: ["--root", "/path/to/workspace"]
+#       enabled: false
