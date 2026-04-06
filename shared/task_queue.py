@@ -71,6 +71,8 @@ class QueuedTask:
     # Phase 29.5: Auto-retry tracking
     is_auto_retry: bool = False
     parent_task_id: Optional[str] = None
+    # Phase 39: Captured intent spec for verification at task close
+    intent_spec: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         """Serialize for API responses and snapshots."""
@@ -94,6 +96,9 @@ class QueuedTask:
             d["is_auto_retry"] = True
         if self.parent_task_id:
             d["parent_task_id"] = self.parent_task_id
+        # Phase 39: Only emit intent_spec if present (keeps payloads clean)
+        if self.intent_spec:
+            d["intent_spec"] = self.intent_spec
         return d
 
     @classmethod
@@ -114,6 +119,8 @@ class QueuedTask:
             archived=data.get("archived", False),
             is_auto_retry=data.get("is_auto_retry", False),
             parent_task_id=data.get("parent_task_id"),
+            # Phase 39: Load-bearing .get() — older tasks in history don't have this field
+            intent_spec=data.get("intent_spec"),
         )
 
 
@@ -183,10 +190,14 @@ class TaskQueue:
         priority: TaskPriority = TaskPriority.NORMAL,
         intent: Optional[str] = None,
         confirmed: bool = False,
+        intent_spec: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Add a task to the queue. Returns task_id immediately.
         Non-blocking — the task will be picked up by the process loop.
+
+        Phase 39: Optional intent_spec is the captured "checkable constraints"
+        for this task; the verifier reads it at task close to detect drift.
         """
         task = QueuedTask(
             id=uuid.uuid4().hex[:12],
@@ -194,6 +205,7 @@ class TaskQueue:
             priority=priority,
             intent=intent,
             confirmed=confirmed,
+            intent_spec=intent_spec,
         )
 
         # Insert in priority order (lower number = higher priority)
@@ -243,6 +255,9 @@ class TaskQueue:
             priority=original_task.priority,
             intent=original_task.intent,
             confirmed=original_task.confirmed,
+            # Phase 39: Inherit the parent's intent_spec — the retry exists to satisfy
+            # the ORIGINAL goal, not the [AUTO-RETRY]-modified query.
+            intent_spec=original_task.intent_spec,
         )
         # Mark the newly created task as an auto-retry
         for t in self._pending:

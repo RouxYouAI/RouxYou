@@ -25,9 +25,11 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Load .env before anything reads env vars (Phase 34: Claude API key, etc.)
+# Phase 39: override=True because parent process (Claude Code, etc.) may
+# inject empty API key env vars that would otherwise block the real values.
 try:
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(project_root, ".env"))
+    load_dotenv(os.path.join(project_root, ".env"), override=True)
 except ImportError:
     pass  # python-dotenv not installed — env vars must be set externally
 
@@ -50,12 +52,27 @@ from shared.companion import (
 )
 from shared.blackbox import log_event as _bb_log
 from shared.roux_client import roux as _roux
-from shared.llm import init_providers, get_registry  # Phase 34
+from shared.llm import init_providers, get_registry, warm_models  # Phase 34
 from shared.event_bus import create_sse_endpoint, create_events_rest_endpoint  # Phase 37
 from shared.cost_tracker import tracker as cost_tracker  # Phase 35 dashboard
+from shared.verifier import extract_intent_spec, verify_task  # Phase 39: silent drift verifier
+from shared.verifier_log import (  # Apr 6: verifier observability layer
+    record_verification as _verifier_log_record,
+    tag_verification as _verifier_log_tag,
+    read_recent as _verifier_log_recent,
+    compute_stats as _verifier_log_stats,
+)
 
 # Phase 28: Track proposal_id -> task_id mapping for completion callbacks
 _proposal_task_map: dict = {}  # {task_id: proposal_id}
+
+# Phase 39: Track in-flight intent extraction futures by task_id.
+# Extraction kicks off in /companion (non-blocking), the queue executor
+# awaits the future right before calling verify_task at task close.
+_intent_spec_futures: dict = {}  # {task_id: asyncio.Task}
+
+# Intents we never verify — no execution to grade against
+_VERIFY_SKIP_INTENTS = {"chat", "chat_informed", "clarify", "confirm"}
 import re
 import time as _time
 
@@ -399,6 +416,66 @@ async def health():
 
 
 # =====================================================
+#  VERIFIER OBSERVABILITY (Apr 6 2026)
+# =====================================================
+# Phase 1 verifier is flag-only — these endpoints expose the data
+# DJ needs to compute false-positive / false-negative rates and
+# decide when Phase 2 (auto-remediation) is safe to ship.
+
+@app.get("/verifier/recent")
+async def verifier_recent(n: int = 20, kind: Optional[str] = None):
+    """Return the N most recent verifier records.
+
+    Query params:
+      n: how many records to return (default 20)
+      kind: filter by record kind ("verification" or "tag"). Omit for all.
+    """
+    return {"records": _verifier_log_recent(n=n, kind=kind)}
+
+
+@app.get("/verifier/stats")
+async def verifier_stats(window_hours: float = 24.0):
+    """Aggregate verifier metrics over the given time window.
+
+    Query params:
+      window_hours: lookback window in hours (default 24, use 0 for all-time)
+    """
+    if window_hours <= 0:
+        window_hours = None
+    return _verifier_log_stats(window_hours=window_hours)
+
+
+class VerifierTagRequest(BaseModel):
+    task_id: str  # hex string from task_queue
+    tag: str  # one of: true_positive, false_positive, true_negative, false_negative
+    note: Optional[str] = ""
+
+
+@app.post("/verifier/tag")
+async def verifier_tag(request: VerifierTagRequest):
+    """Tag a past verification as TP/FP/TN/FN for FP/FN rate computation.
+
+    Tags are append-only events on the same JSONL log — calling this twice
+    for the same task_id keeps both records, the most recent one wins
+    when computing stats. The audit trail is preserved.
+    """
+    ok = _verifier_log_tag(
+        task_id=request.task_id,
+        tag=request.tag,
+        note=request.note or "",
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid tag '{request.tag}' or write failed. "
+                "Valid tags: true_positive, false_positive, true_negative, false_negative"
+            ),
+        )
+    return {"success": True, "task_id": request.task_id, "tag": request.tag}
+
+
+# =====================================================
 #  CORE EXECUTION LOGIC (used by queue processor)
 # =====================================================
 
@@ -577,7 +654,14 @@ async def _execute_task_internal(query: str) -> Dict:
                             plan_steps=plan,
                             execution_results=result.get("results", []),
                         )
-                        return {"success": True, "response": result.get("summary")}
+                        # Phase 39: Propagate plan + worker results so the verifier
+                        # can see the actual code that was written, not just prose.
+                        return {
+                            "success": True,
+                            "response": result.get("summary"),
+                            "plan": plan,
+                            "worker_results": result.get("results", []),
+                        }
                     else:
                         error_msg = result.get("error") or "Unknown worker error"
                         worker_summary = result.get("summary", "")
@@ -652,7 +736,126 @@ async def _queue_executor(task: QueuedTask) -> Dict:
 
     # Attach synthesized response to the result
     result["synthesized_response"] = response
-    
+
+    # ============================================================
+    # Phase 39: SILENT SEMANTIC DRIFT VERIFIER
+    # Runs at task close on successful verifiable tasks. Compares
+    # the actual code that was written against the constraints
+    # extracted from the user's original request at submission time.
+    # Advisory only — never blocks the task, never raises.
+    # ============================================================
+    try:
+        if (
+            success
+            and task.intent not in _VERIFY_SKIP_INTENTS
+            and task.intent is not None
+        ):
+            # Wait for intent extraction to finish (was kicked off at submission)
+            spec_future = _intent_spec_futures.pop(task.id, None)
+            intent_spec = None
+            if spec_future is not None:
+                try:
+                    intent_spec = await asyncio.wait_for(spec_future, timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"VERIFIER: intent_spec extraction timed out for #{task.id}")
+                except Exception as e:
+                    logger.warning(f"VERIFIER: intent_spec future raised: {e}")
+            elif task.intent_spec:
+                # Auto-retry path — parent's intent_spec was inherited via submit_retry,
+                # no in-flight future for this child task
+                intent_spec = task.intent_spec
+
+            if intent_spec is None:
+                # Nothing to verify against — skipped, no badge in dashboard
+                skipped_verdict = {
+                    "verdict": "skipped",
+                    "reason": "no intent_spec available",
+                    "missing_constraints": [],
+                    "verifier_model": "",
+                    "verified_at": _time.time(),
+                }
+                result["verification_result"] = skipped_verdict
+                # Apr 6: log skipped verifications too — they tell us how often
+                # the extraction phase is failing or returning empty specs.
+                try:
+                    _verifier_log_record(
+                        task_id=task.id,
+                        query=task.query,
+                        intent=task.intent,
+                        intent_spec=None,
+                        plan_steps=result.get("plan", []),
+                        verdict_dict=skipped_verdict,
+                        latency_ms=0,
+                    )
+                except Exception:
+                    pass
+            else:
+                # Persist the spec on the task for retry inheritance and history
+                task.intent_spec = intent_spec
+                # Verify (timed for observability)
+                _verify_start = _time.time()
+                verdict_dict = await verify_task(
+                    original_query=task.query,
+                    intent_spec=intent_spec,
+                    execution_result=result,
+                    plan_steps=result.get("plan", []),
+                )
+                _verify_latency_ms = int((_time.time() - _verify_start) * 1000)
+                result["verification_result"] = verdict_dict
+
+                # Apr 6: persist full record to verifier_log for FP/FN analysis
+                try:
+                    _verifier_log_record(
+                        task_id=task.id,
+                        query=task.query,
+                        intent=task.intent,
+                        intent_spec=intent_spec,
+                        plan_steps=result.get("plan", []),
+                        verdict_dict=verdict_dict,
+                        latency_ms=_verify_latency_ms,
+                    )
+                except Exception as e:
+                    logger.warning(f"VERIFIER: verifier_log write failed: {e}")
+
+                # Episodic logging — every verification (incl. skipped) for tuning
+                try:
+                    from memory.core_state import get_core_state as _get_core
+                    _core_state = _get_core()
+                    verdict_str = verdict_dict.get("verdict", "uncertain")
+                    success_flag = (
+                        True if verdict_str == "pass"
+                        else False if verdict_str == "fail"
+                        else None
+                    )
+                    _core_state.record_episode(
+                        event_type="verification",
+                        source="verifier",
+                        summary=verdict_dict.get("reason", "")[:500],
+                        success=success_flag,
+                        failure_mode=("semantic_drift" if verdict_str == "fail" else None),
+                    )
+                except Exception as e:
+                    logger.warning(f"VERIFIER: episodic logging failed: {e}")
+
+                logger.info(
+                    f"VERIFIER #{task.id}: verdict={verdict_dict.get('verdict')} "
+                    f"latency={_verify_latency_ms}ms "
+                    f"reason={verdict_dict.get('reason', '')[:100]}"
+                )
+    except Exception as e:
+        # The verifier MUST NOT break task completion. Log and move on.
+        logger.warning(f"VERIFIER: top-level exception (non-fatal): {e}")
+        result["verification_result"] = {
+            "verdict": "uncertain",
+            "reason": f"verifier wrapper exception: {str(e)[:150]}",
+            "missing_constraints": [],
+            "verifier_model": "",
+            "verified_at": _time.time(),
+        }
+    finally:
+        # Always clean up the future map even on early exit
+        _intent_spec_futures.pop(task.id, None)
+
     # Phase 28: If this task came from a proposal, update proposal bus state
     if task.id in _proposal_task_map:
         prop_info = _proposal_task_map.pop(task.id)
@@ -720,10 +923,49 @@ async def companion_chat(request: CompanionRequest):
     Companion chat endpoint.
     - Chat/clarify/confirm intents: handled immediately (synchronous)
     - Execute intents: queued and returned immediately with task_id (async)
+    - bigbrain: prefix: route directly to Claude Sonnet via Anthropic API
     """
     user_input = request.message.strip()
     logger.info(f"Companion received: {user_input[:80]}...")
     set_thought(f"Processing: {user_input[:60]}...")
+
+    # Phase 39: bigbrain escalation — explicit user-triggered route to Claude
+    if user_input.lower().startswith("bigbrain:"):
+        prompt = user_input[len("bigbrain:"):].strip()
+        logger.info(f"BIGBRAIN escalation: {prompt[:80]}")
+        set_thought("Escalating to Claude Sonnet via bigbrain...")
+        add_user_message(user_input, intent="bigbrain")
+        try:
+            from shared.llm import llm_generate
+            llm_response = await llm_generate(
+                "bigbrain",
+                prompt=prompt,
+                system=(
+                    "You are Claude Sonnet, being called via RouxYou's bigbrain "
+                    "escalation path. RouxYou is DJ's local AI agent system that "
+                    "normally runs GPT-OSS 20B for reasoning. When the local stack "
+                    "can't handle something, the user explicitly asks you by "
+                    "prefixing 'bigbrain:' on a message. Respond directly and "
+                    "substantively. You don't have access to DJ's filesystem or "
+                    "RouxYou's memory — you're pure reasoning only."
+                ),
+                temperature=0.7,
+                timeout=90,
+            )
+            if llm_response.success:
+                response = llm_response.text
+            else:
+                response = f"Bigbrain call failed: {llm_response.error}"
+        except Exception as e:
+            response = f"Bigbrain error: {e}"
+        add_assistant_message(response)
+        clear_activity()
+        return {
+            "success": True,
+            "response": response,
+            "intent": "bigbrain",
+            "executed": False,
+        }
 
     # 1. Classify Intent
     classification = await classify_intent(user_input)
@@ -807,6 +1049,17 @@ async def companion_chat(request: CompanionRequest):
         confirmed=request.confirmed,
     )
 
+    # Phase 39: Kick off intent extraction in parallel with execution.
+    # By the time the worker finishes (typ. 20s-2min), this 2-5s extraction
+    # call has been done for ages. The queue executor awaits it at task close.
+    if intent not in _VERIFY_SKIP_INTENTS:
+        try:
+            _intent_spec_futures[task_id] = asyncio.create_task(
+                extract_intent_spec(user_input, intent)
+            )
+        except Exception as e:
+            logger.warning(f"intent_spec extraction kickoff failed: {e}")
+
     # Build a conversational acknowledgment that describes the task
     task_summary = classification.get("task_summary", user_input)
     queue_state = task_queue.get_queue_state()
@@ -848,6 +1101,24 @@ async def get_conversation():
 #  STARTUP
 # =====================================================
 
+async def _warmup_background():
+    """Apr 6 2026: warm the LLM models that the orchestrator's hot paths use
+    so cold-start latency (13s chat / 28s informed_chat measured Apr 5) doesn't
+    bite the user's first message. Background task — service stays healthy
+    throughout, models are loaded into VRAM in parallel."""
+    try:
+        # Hot paths: companion (ministral-3:8b) and informed_chat (gpt-oss:20b).
+        # router shares the ministral model so it gets warmed for free.
+        results = await warm_models(["companion", "informed_chat"])
+        for alias, (success, elapsed, err) in results.items():
+            if success:
+                logger.info(f"🔥 Orchestrator warmup: {alias} loaded in {elapsed:.1f}s")
+            else:
+                logger.warning(f"⚠️ Orchestrator warmup failed for {alias}: {err}")
+    except Exception as e:
+        logger.warning(f"Warmup background task crashed (non-fatal): {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     register_process("orchestrator")
@@ -855,6 +1126,10 @@ async def startup_event():
     logger.info(f"Orchestrator initialized on port {PORT}")
     logger.info("Phase 19: Task Queue ENABLED")
     logger.info("Phase 37: SSE event stream available at /events/stream")
+
+    # Apr 6 2026: kick warmup as background task — service comes up healthy
+    # immediately, models are loaded into VRAM in parallel.
+    asyncio.create_task(_warmup_background())
 
     # Wire up the queue
     task_queue.set_executor(_queue_executor)

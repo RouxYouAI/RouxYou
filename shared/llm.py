@@ -844,3 +844,77 @@ def llm_chat_sync(alias_or_model: str, messages: list[dict], system: str = "",
                      temperature=temperature, max_tokens=max_tokens,
                      format=format, timeout=timeout, **kwargs)
         )
+
+
+# ============================================================
+# Cold-start warmup
+# ============================================================
+# Cold-start latencies for local Ollama models can be 10-30s on the first
+# call after a service starts (model load into VRAM + first prefill). Warm
+# calls are <1s. The fix is to send a 1-token prompt at service startup so
+# the model is loaded into VRAM before any user request arrives. Services
+# should call warm_models() from a background task in their startup hook
+# so the warmup doesn't block the service from coming up healthy.
+
+async def warm_model(alias: str, timeout: float = 120) -> tuple:
+    """Send a tiny prompt to load a model into memory.
+
+    Returns (success, elapsed_seconds, error_message). On Ollama, this
+    causes the model to be loaded into VRAM and stay loaded for the
+    duration of the keepalive window (default 5 min).
+
+    Uses max_tokens=1 + temperature=0 to minimize generation cost — we
+    only care about the load, not the output.
+    """
+    start = time.time()
+    try:
+        response = await llm_generate(
+            alias,
+            prompt="hi",
+            max_tokens=1,
+            temperature=0.0,
+            timeout=timeout,
+        )
+        elapsed = time.time() - start
+        if response.success:
+            return (True, elapsed, "")
+        else:
+            return (False, elapsed, response.error or "unknown")
+    except Exception as e:
+        elapsed = time.time() - start
+        return (False, elapsed, str(e))
+
+
+async def warm_models(aliases: list) -> dict:
+    """Warm multiple model aliases in parallel.
+
+    Returns dict of {alias: (success, elapsed_seconds, error)}.
+    Safe to call on aliases that may resolve to the same underlying
+    Ollama model — Ollama deduplicates the load internally, so the
+    second call is fast.
+
+    This function does NOT raise — it logs warnings on failure and
+    returns the result dict. The caller decides what to do with
+    failures (typically: nothing, since warmup is best-effort).
+    """
+    import asyncio
+    if not aliases:
+        return {}
+    if not _registry.initialized:
+        _registry.initialize_defaults()
+
+    results = await asyncio.gather(
+        *[warm_model(a) for a in aliases],
+        return_exceptions=True,
+    )
+    out = {}
+    for alias, r in zip(aliases, results):
+        if isinstance(r, Exception):
+            logger.warning(f"warm_model({alias}) raised: {r}")
+            out[alias] = (False, 0.0, str(r))
+        else:
+            success, elapsed, error = r
+            status = "OK" if success else "FAIL"
+            logger.info(f"WARMUP [{status}] {alias}: {elapsed:.1f}s {('('+error+')') if error else ''}")
+            out[alias] = r
+    return out
