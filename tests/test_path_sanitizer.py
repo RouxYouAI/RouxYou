@@ -40,26 +40,26 @@ def _check(label, actual, expected):
 
 def test_extract_basic_forward_slash():
     print("test_extract_basic_forward_slash")
-    paths = _extract_user_paths("create a file at C:/Users/djoet/Desktop/verifier_test.txt that contains hello")
-    return _check("forward-slash extraction", paths, ["C:/Users/djoet/Desktop/verifier_test.txt"])
+    paths = _extract_user_paths("create a file at C:/Users/testuser/Desktop/verifier_test.txt that contains hello")
+    return _check("forward-slash extraction", paths, ["C:/Users/testuser/Desktop/verifier_test.txt"])
 
 
 def test_extract_basic_backslash():
     print("test_extract_basic_backslash")
-    paths = _extract_user_paths(r"read C:\Users\djoet\Desktop\notes.md and tell me what is in it")
-    return _check("backslash extraction", paths, [r"C:\Users\djoet\Desktop\notes.md"])
+    paths = _extract_user_paths(r"read C:\Users\testuser\Desktop\notes.md and tell me what is in it")
+    return _check("backslash extraction", paths, [r"C:\Users\testuser\Desktop\notes.md"])
 
 
 def test_extract_over_escaped():
     print("test_extract_over_escaped")
-    paths = _extract_user_paths(r"write to C:\\Users\\djoet\\Desktop\\foo.txt please")
-    return _check("over-escaped collapse", paths, [r"C:\Users\djoet\Desktop\foo.txt"])
+    paths = _extract_user_paths(r"write to C:\\Users\\testuser\\Desktop\\foo.txt please")
+    return _check("over-escaped collapse", paths, [r"C:\Users\testuser\Desktop\foo.txt"])
 
 
 def test_extract_with_trailing_punctuation():
     print("test_extract_with_trailing_punctuation")
-    paths = _extract_user_paths("delete C:/Users/djoet/Desktop/temp.log.")
-    return _check("trailing period stripped", paths, ["C:/Users/djoet/Desktop/temp.log"])
+    paths = _extract_user_paths("delete C:/Users/testuser/Desktop/temp.log.")
+    return _check("trailing period stripped", paths, ["C:/Users/testuser/Desktop/temp.log"])
 
 
 def test_extract_multiple_paths():
@@ -82,28 +82,28 @@ def test_extract_empty():
 
 def test_normalize_forward_to_back():
     print("test_normalize_forward_to_back")
-    n = _normalize_path_for_compare("C:/Users/djoet/Desktop/foo.txt")
-    return _check("forward to back + lower", n, r"c:\users\djoet\desktop\foo.txt")
+    n = _normalize_path_for_compare("C:/Users/testuser/Desktop/foo.txt")
+    return _check("forward to back + lower", n, r"c:\users\testuser\desktop\foo.txt")
 
 
 def test_normalize_case_insensitive():
     print("test_normalize_case_insensitive")
-    a = _normalize_path_for_compare(r"C:\Users\DJoet\Desktop\Foo.TXT")
-    b = _normalize_path_for_compare("c:/users/djoet/desktop/foo.txt")
+    a = _normalize_path_for_compare(r"C:\Users\TestUser\Desktop\Foo.TXT")
+    b = _normalize_path_for_compare("c:/users/testuser/desktop/foo.txt")
     return _check("case insensitive equality", a, b)
 
 
 def test_normalize_trailing_slash():
     print("test_normalize_trailing_slash")
-    n = _normalize_path_for_compare(r"C:\Users\djoet\Desktop\\")
-    return _check("trailing slash stripped", n, r"c:\users\djoet\desktop")
+    n = _normalize_path_for_compare(r"C:\Users\testuser\Desktop\\")
+    return _check("trailing slash stripped", n, r"c:\users\testuser\desktop")
 
 
 def test_apr6_regression_scenario():
     """The exact scenario the verifier caught on Apr 6 morning.
 
-    User said: 'create a file at C:/Users/djoet/Desktop/verifier_test.txt that contains the word hello'
-    GPT-OSS 20B chose: C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\hello
+    User said: 'create a file at C:/Users/testuser/Desktop/verifier_test.txt that contains the word hello'
+    GPT-OSS 20B chose: C:\\Users\\testuser\\Desktop\\SelfModifyingAgents\\hello
 
     The new defense should:
     1. Extract the user's path from the task
@@ -111,12 +111,12 @@ def test_apr6_regression_scenario():
     3. Trigger override (verified at integration time, not here)
     """
     print("test_apr6_regression_scenario")
-    user_text = "create a file at C:/Users/djoet/Desktop/verifier_test.txt that contains the word hello"
+    user_text = "create a file at C:/Users/testuser/Desktop/verifier_test.txt that contains the word hello"
     user_paths = _extract_user_paths(user_text)
-    if not _check("extracted user path", user_paths, ["C:/Users/djoet/Desktop/verifier_test.txt"]):
+    if not _check("extracted user path", user_paths, ["C:/Users/testuser/Desktop/verifier_test.txt"]):
         return False
 
-    model_chose = r"C:\Users\djoet\Desktop\SelfModifyingAgents\hello"
+    model_chose = r"C:\Users\testuser\Desktop\SelfModifyingAgents\hello"
     model_norm = _normalize_path_for_compare(model_chose)
     user_norm = [_normalize_path_for_compare(p) for p in user_paths]
     return _check("model path NOT in user paths (mismatch detected)", model_norm not in user_norm, True)
@@ -125,9 +125,9 @@ def test_apr6_regression_scenario():
 def test_legitimate_match_passes_through():
     """When the model uses the user's exact path, no override should fire."""
     print("test_legitimate_match_passes_through")
-    user_text = "write to C:/Users/djoet/Desktop/foo.txt"
+    user_text = "write to C:/Users/testuser/Desktop/foo.txt"
     user_paths = _extract_user_paths(user_text)
-    model_chose = r"C:\Users\djoet\Desktop\foo.txt"
+    model_chose = r"C:\Users\testuser\Desktop\foo.txt"
     model_norm = _normalize_path_for_compare(model_chose)
     user_norm = [_normalize_path_for_compare(p) for p in user_paths]
     return _check("model path matches after normalization", model_norm in user_norm, True)

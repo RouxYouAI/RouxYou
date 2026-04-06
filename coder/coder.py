@@ -32,6 +32,17 @@ from shared.cost_tracker import record_usage
 PORT = 8002
 MODEL_NAME = "gpt-oss:20b"
 
+# Generalized for cross-machine portability. The system prompt template uses a
+# __USERNAME__ sentinel that gets substituted with the actual user at prompt-build
+# time, so the file is safe to ship publicly without leaking the original author's
+# username. Override SEARXNG_URL via environment if you have a SearXNG instance
+# somewhere other than localhost.
+import getpass as _getpass
+USER_NAME = _getpass.getuser()
+USER_HOME = os.path.expanduser("~")
+PROJECT_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888")
+
 # --- LOGGING SETUP ---
 logger = get_logger("coder")
 
@@ -47,12 +58,15 @@ class PlanRequest(BaseModel):
     history: List[str] = []
 
 def _check_searxng() -> bool:
-    """Quick check if SearXNG is reachable. Used to inform Coder."""
+    """Quick check if SearXNG is reachable. Used to inform Coder.
+    Default URL is http://localhost:8888 — override with the SEARXNG_URL env var
+    if your SearXNG instance lives elsewhere on your network.
+    """
     import urllib.request
     try:
-        urllib.request.urlopen("http://192.168.1.188:8888", timeout=2)
+        urllib.request.urlopen(SEARXNG_URL, timeout=2)
         return True
-    except:
+    except Exception:
         return False
 
 def _extract_user_paths(text: str) -> List[str]:
@@ -152,7 +166,7 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     skill_text = sections.get("skills", skill_text)
     system_map = sections.get("system_map", system_map)
 
-    return f"""
+    _prompt = f"""
     ## YOUR IDENTITY
     You are a surgical code editor with 15 years of systems programming experience.
     You specialize in making the SMALLEST possible change to achieve a goal.
@@ -185,12 +199,12 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     
     ## DEFAULT WORKING DIRECTORY (CRITICAL)
     The default working directory for ALL tasks is:
-      C:\\Users\\djoet\\Desktop\\SelfModifyingAgents
+      C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents
 
     When a task refers to a file by name only (e.g. "thank_you.txt", "notes.md"),
     ALWAYS assume it lives in that directory UNLESS context (memories or task
     description) explicitly says otherwise.
-    NEVER guess C:\\Users\\djoet\\ as the root. That is almost always wrong.
+    NEVER guess C:\\Users\\__USERNAME__\\ as the root. That is almost always wrong.
 
     ## USER-PROVIDED PATHS (HARD CONSTRAINT — READ THIS)
     If the user's task contains an absolute path (anything matching C:\\... or C:/...),
@@ -204,10 +218,10 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     the file to a more sensible directory. The user picked that path on purpose.
 
     Example:
-      User: "create a file at C:/Users/djoet/Desktop/verifier_test.txt with the word hello"
-      CORRECT: write_file at C:\\Users\\djoet\\Desktop\\verifier_test.txt
-      WRONG:   write_file at C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\hello
-      WRONG:   write_file at C:\\Users\\djoet\\Desktop\\verifier.txt
+      User: "create a file at C:/Users/__USERNAME__/Desktop/verifier_test.txt with the word hello"
+      CORRECT: write_file at C:\\Users\\__USERNAME__\\Desktop\\verifier_test.txt
+      WRONG:   write_file at C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\hello
+      WRONG:   write_file at C:\\Users\\__USERNAME__\\Desktop\\verifier.txt
       WRONG:   write_file at .\\verifier_test.txt
 
     If you cannot use the user's path for some reason (e.g. it does not exist for a
@@ -220,15 +234,15 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     This system runs on Windows 10/11. When using run_command:
     - Use `dir` NOT `ls`, `type` NOT `cat`, `copy` NOT `cp`, `del` NOT `rm`
     - PowerShell: prefix with `powershell -Command "..."`
-    - Home directory: C:\\Users\\djoet
+    - Home directory: C:\\Users\\__USERNAME__
 
     ## PATH ESCAPING (READ CAREFULLY)
     You output JSON. Inside JSON strings, a single backslash is written as "\\".
-    That means a Windows path C:\\Users\\djoet\\Desktop must appear in your JSON as:
-      "C:\\\\Users\\\\djoet\\\\Desktop"  (each \\ becomes \\\\)
+    That means a Windows path C:\\Users\\__USERNAME__\\Desktop must appear in your JSON as:
+      "C:\\\\Users\\\\__USERNAME__\\\\Desktop"  (each \\ becomes \\\\)
     DO NOT use more than double backslashes in the JSON source. When parsed the
     path will contain single backslashes, which is what Windows expects.
-    If unsure, prefer forward slashes: "C:/Users/djoet/Desktop" — Windows accepts
+    If unsure, prefer forward slashes: "C:/Users/__USERNAME__/Desktop" — Windows accepts
     these and no escaping is needed.
     
     {memory_text}
@@ -236,21 +250,22 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     {skill_text}
     
     ## SYSTEM KNOWLEDGE (YOUR OWN INFRASTRUCTURE)
-    Log files are at: C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\logs\\
+    Log files are at: C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\logs\\
     Available logs: coder.log, worker.log, orchestrator.log, watchtower.log,
                     gateway.log, deployer.log, memory.log, task_queue.log
-    To READ a log: {{"action": "run_command", "details": "powershell -Command \"Get-Content C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\logs\\coder.log -Tail 50\""}}
-    To LIST all logs: {{"action": "run_command", "details": "dir C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\logs"}}
+    To READ a log: {{"action": "run_command", "details": "powershell -Command \"Get-Content C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\logs\\coder.log -Tail 50\""}}
+    To LIST all logs: {{"action": "run_command", "details": "dir C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\logs"}}
     The shared logger function signature: read_log(service_name: str) — requires the service name.
     
     Services and ports:
       - Gateway: 8000 | Orchestrator: 8001 | Coder: 8002 | Worker: 8003 | Watchtower: 8010
     
-    Memory file: C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\memory.json
-    Task registry: C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\tasks.json
+    Memory file: C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\memory.json
+    Task registry: C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\tasks.json
     
     ## WEB SEARCH AVAILABILITY
-    Web search uses SearXNG hosted on the Proxmox server (192.168.1.188:8888).
+    Web search uses SearXNG. The instance URL is configured via the SEARXNG_URL
+    environment variable (default: http://localhost:8888).
     Current status: {"✅ ONLINE — web_search is available" if searxng_online else "❌ OFFLINE — web_search WILL FAIL. Do NOT use web_search in your plan."}
     {"" if searxng_online else "Solve ALL tasks with local tools only: read_file, run_command, patch_file, write_file."}
     NEVER use web_search as a fallback for tasks you don't understand.
@@ -353,8 +368,8 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
     ## SCOPE & EFFICIENCY RULES (CRITICAL)
     7. NEVER run analysis tools (flake8, pylint, grep, findstr) on the ENTIRE project directory.
        Always target SPECIFIC files or at most a single subdirectory.
-       BAD:  run_command "flake8 C:\\Users\\djoet\\Desktop\\SelfModifyingAgents"
-       GOOD: run_command "flake8 C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\orchestrator\\orchestrator.py"
+       BAD:  run_command "flake8 C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents"
+       GOOD: run_command "flake8 C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\orchestrator\\orchestrator.py"
     8. Keep plans to 6 steps or fewer. If a task needs more, focus on the 3-4 MOST
        IMPORTANT changes and note what was deferred.
     9. run_command has a 60-second timeout. If a command could exceed this, scope it down.
@@ -381,13 +396,18 @@ def _build_system_prompt(memories: List[Any] = [], query: str = ""):
 
     ## CONTEXT EXTRACTION
     - If a relevant memory exists, use its working_dir.
-    - Subfolder references like "m_t/trap.py" expand to: C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\m_t\\trap.py
+    - Subfolder references like "m_t/trap.py" expand to: C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\m_t\\trap.py
     - NEVER use partial paths like "C:\\m_t" — always use the full absolute path.
     - Always populate initial_context with working_dir, active_file, and detected_errors.
 
     ## SYSTEM ARCHITECTURE
     {system_map}
     """
+    # Generalize for cross-machine portability — substitute the actual user
+    # of the running machine in place of the literal "__USERNAME__" used as a
+    # placeholder throughout the prompt template above. This keeps the
+    # template readable while making the file safe to ship publicly.
+    return _prompt.replace("__USERNAME__", USER_NAME)
 
 @app.post("/plan")
 async def generate_plan(request: PlanRequest):
@@ -498,7 +518,7 @@ async def generate_plan(request: PlanRequest):
                 # Phase 23: Auto-build log read command from alias
                 if raw_action in ("read_log", "read_logs", "view_log") and resolved_action == "run_command":
                     service = step.get("details", "").strip().lower()
-                    log_path = f"C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\logs\\{service}.log"
+                    log_path = f"C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents\\logs\\{service}.log"
                     ns["details"] = f'powershell -Command "Get-Content \'{log_path}\' -Tail 50"'
                     logger.info(f"📋 Auto-built log command for service: {service}")
 
@@ -543,16 +563,16 @@ async def generate_plan(request: PlanRequest):
                 # Ensure absolute paths for file operations
                 if ns["action"] in ("read_file", "write_file", "patch_file") and ns["details"] and not ns["details"].startswith("C:\\"):
                     # Resolve relative path against working_dir or project root
-                    base = plan_data.get("initial_context", {}).get("working_dir", "C:\\Users\\djoet\\Desktop\\SelfModifyingAgents")
+                    base = plan_data.get("initial_context", {}).get("working_dir", "C:\\Users\\__USERNAME__\\Desktop\\SelfModifyingAgents")
                     ns["details"] = os.path.join(base, ns["details"])
 
                 # Fix file operation steps that reference wrong user paths.
-                # LLMs sometimes hallucinate usernames (e.g. C:\Users\droux\ instead of C:\Users\djoet\).
+                # LLMs sometimes hallucinate usernames (e.g. C:\Users\droux\ instead of C:\Users\<actual user>\).
                 if ns["action"] in ("read_file", "write_file", "patch_file", "run_command") and ns.get("details"):
                     detail = ns["details"]
 
                     # Phase 39: GPT-OSS 20B over-escapes backslashes in JSON output,
-                    # producing paths like C:\\Users\\djoet\\Desktop (literal double-\).
+                    # producing paths like C:\\Users\\<user>\\Desktop (literal double-\).
                     # Windows cmd.exe rejects those. Collapse repeated backslashes in
                     # local paths (but preserve UNC paths that start with \\).
                     if "\\\\" in detail and not detail.lstrip().startswith("\\\\"):
@@ -564,22 +584,22 @@ async def generate_plan(request: PlanRequest):
                             ns["details"] = fixed
                             detail = fixed
 
-                    # Fix hallucinated usernames — only C:\Users\djoet is valid
+                    # Fix hallucinated usernames — only the running user's name is valid
                     import re as _re2
-                    wrong_user = _re2.search(r'C:\\Users\\(?!djoet\\)([^\\]+)\\', detail)
+                    wrong_user = _re2.search(rf'C:\\Users\\(?!{_re2.escape(USER_NAME)}\\)([^\\]+)\\', detail)
                     if wrong_user:
-                        fixed = _re2.sub(r'C:\\Users\\[^\\]+\\', r'C:\\Users\\djoet\\', detail)
+                        fixed = _re2.sub(r'C:\\Users\\[^\\]+\\', rf'C:\\Users\\{USER_NAME}\\', detail)
                         logger.info(f"PATH FIX (wrong user): {detail[:80]} -> {fixed[:80]}")
                         ns["details"] = fixed
                         detail = fixed
 
                 # Fix run_command steps that reference bare filenames with wrong root path.
-                # LLMs sometimes guess C:\Users\djoet\filename instead of the correct
-                # C:\Users\djoet\Desktop\SelfModifyingAgents\filename.
+                # LLMs sometimes guess C:\Users\<user>\filename instead of the correct
+                # C:\Users\<user>\<project>\filename.
                 if ns["action"] == "run_command" and ns.get("details"):
                     cmd = ns["details"]
-                    wrong_root = "C:\\Users\\djoet\\"
-                    correct_root = "C:\\Users\\djoet\\Desktop\\SelfModifyingAgents\\"
+                    wrong_root = f"C:\\Users\\{USER_NAME}\\"
+                    correct_root = f"C:\\Users\\{USER_NAME}\\Desktop\\SelfModifyingAgents\\"
                     # Replace bare home-dir paths that are NOT Desktop/AppData/etc
                     import re as _re
                     def _fix_path(m):
@@ -591,7 +611,7 @@ async def generate_plan(request: PlanRequest):
                             return full
                         return correct_root + after
                     fixed_cmd = _re.sub(
-                        r'C:\\Users\\djoet\\[^\\\s"\']+',
+                        rf'C:\\Users\\{_re.escape(USER_NAME)}\\[^\\\s"\']+',
                         _fix_path,
                         cmd
                     )
