@@ -2091,9 +2091,22 @@ def render_queue_panel():
             dur = _fmt_duration(task.get("started_at"), task.get("completed_at"))
             ts = _fmt_timestamp(task.get("completed_at") or task.get("created_at"))
             archive_label = " 📦" if is_archived else ""
-            
+
+            # Phase 39: Verification badge — single character indicating drift verdict
+            result_for_badge = task.get("result") or {}
+            v_result = result_for_badge.get("verification_result") or {}
+            v_verdict = v_result.get("verdict")
+            if v_verdict == "pass":
+                v_badge = "✓ "
+            elif v_verdict == "fail":
+                v_badge = "⚠ "
+            elif v_verdict == "uncertain":
+                v_badge = "? "
+            else:
+                v_badge = ""
+
             with st.expander(
-                f"{emoji} {badge} {task['query'][:60]}{'...' if len(task.get('query',''))>60 else ''}"
+                f"{v_badge}{emoji} {badge} {task['query'][:60]}{'...' if len(task.get('query',''))>60 else ''}"
                 f"  —  {dur}  •  {ts}{archive_label}",
                 expanded=False
             ):
@@ -2105,6 +2118,24 @@ def render_queue_panel():
                 result = task.get("result", {})
                 if isinstance(result, dict) and result.get("synthesized_response"):
                     st.markdown(f"**Result:** {result['synthesized_response'][:500]}")
+
+                # Phase 39: Verification block — show drift verdict + missing constraints
+                if isinstance(result, dict):
+                    vr = result.get("verification_result") or {}
+                    vv = vr.get("verdict")
+                    if vv and vv != "skipped":
+                        v_reason = vr.get("reason", "")
+                        v_missing = vr.get("missing_constraints", []) or []
+                        if vv == "pass":
+                            st.success(f"**Verifier:** {v_reason[:400]}")
+                        elif vv == "fail":
+                            missing_md = "\n".join(f"- {m}" for m in v_missing) or "- (none listed)"
+                            st.error(
+                                f"**Verifier flagged drift:** {v_reason[:400]}\n\n"
+                                f"**Missing constraints:**\n{missing_md}"
+                            )
+                        elif vv == "uncertain":
+                            st.warning(f"**Verifier uncertain:** {v_reason[:400]}")
                 # Archive / Unarchive button
                 task_id = task.get("id", "")
                 if is_archived:

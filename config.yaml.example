@@ -1,0 +1,117 @@
+# RouxYou — Configuration
+# Copy to config.yaml and customize for your setup
+# Last updated: April 6, 2026
+
+base_dir: ""  # Auto-detected if blank
+
+ports:
+  gateway: 8000
+  orchestrator: 8001
+  coder: 8002
+  worker: 8003
+  memory: 8004
+  scheduler: 8005
+  watchtower_supervisor: 8010
+  rag_api: 8011
+  watchtower_cron: 8012
+  roux_voice: 8014
+  dashboard: 8501
+  staging_orchestrator: 9001
+  staging_coder: 9002
+  staging_worker: 9003
+
+# LLM Configuration (Phase 34)
+ollama_host: "http://localhost:11434"
+models:
+  router: "ministral-3:8b"
+  reasoning: "qwen3:14b-q4_K_M"
+  embeddings: "nomic-embed-text"
+
+llm:
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"
+      default: true
+    vllm:
+      base_url: ""  # Set to your vLLM server URL
+      enabled: false
+    claude:
+      # API key loaded from .env (ANTHROPIC_API_KEY)
+      enabled: false
+  aliases:
+    router: "ollama/ministral-3:8b"
+    coder: "ollama/qwen3:14b-q4_K_M"
+    companion: "ollama/ministral-3:8b"
+    coach: "ollama/qwen3:14b-q4_K_M"
+    researcher: "ollama/qwen3:14b-q4_K_M"
+    embeddings: "ollama/nomic-embed-text"
+    bigbrain: "claude/claude-sonnet-4-6"
+
+# Home Assistant (optional)
+home_assistant:
+  url: ""
+
+# Remote Server (optional)
+remote_server:
+  host: ""
+  user: ""
+
+# Search
+search:
+  provider: "duckduckgo"
+  searxng_url: ""  # Set to your SearXNG instance URL
+
+# TTS (optional — set provider to "kitten" or "piper")
+tts:
+  provider: "none"
+  voice: "en_US-amy-medium"
+  speed: 1.0
+
+# Voice (optional — requires mic + Whisper)
+voice:
+  enabled: false
+  piper_executable: "piper"
+  voice_model: "voices/en_GB-cori-medium.onnx"
+  whisper_model: "large-v3-turbo"
+  wake_word: "roux"
+  wake_word_alts: ["roux", "rue", "ru", "roo"]
+  # VAD tuning (Phase 29.4b)
+  vad:
+    aggressiveness: 2       # 0=permissive, 3=aggressive. 2 = sweet spot for clean mic.
+    silence_frames: 50      # Consecutive silent frames before stop (~1.5s at 30ms/frame)
+    min_speech_frames: 10   # Ignore blips shorter than this (~300ms)
+    awake_timeout_s: 30     # Seconds of silence before auto-sleep
+
+# Memory decay (Phase 24)
+memory:
+  age_half_life_days: 14
+  min_utility: 0.15
+  max_age_days: 60
+
+# Auto-approve (Phase 25.2)
+auto_approve:
+  enabled: false
+  daily_limit: 10
+  min_confidence: 0.8
+
+# Silent semantic drift verifier (Phase 39)
+# Captures intent at task submission, verifies execution at task close.
+# Advisory only — never blocks the task. Set enabled: false to disable entirely.
+# Requires ANTHROPIC_API_KEY in .env if verification_model is "bigbrain".
+verifier:
+  enabled: true
+  extraction_model: informed_chat   # local, fast, structured JSON output
+  verification_model: bigbrain      # Claude Sonnet — accuracy matters here
+  skip_intents: [chat, chat_informed, clarify, confirm]
+  max_per_hour: 30                  # caps bigbrain calls; verification_budget tracks
+  timeouts:
+    extraction: 20                  # seconds — gpt-oss:20b call timeout
+    verification: 30                # seconds — bigbrain call timeout
+
+# MCP Servers (Phase 38) — uncomment when needed
+# mcp:
+#   servers:
+#     filesystem:
+#       command: ["npx", "@anthropic/mcp-filesystem"]
+#       args: ["--root", "/path/to/workspace"]
+#       enabled: false
