@@ -1,0 +1,11 @@
+AUTHORING DISCIPLINE — verify BEFORE citing:
+- prop_IDs are uniformly random 12-hex. prop_aabb…, prop_zzcc…, repeating chars = fabrication. If you can't grep it in active/history, don't cite it.
+- Real governance docs: META_POLICY.md, DISCLOSURE_RULE.md, AMENDMENT_2026-*.md. SPEC_v2/v3/_2024 filenames are confabulated.
+- RouxYou began Jan 2026. Any 2024-tagged path, "legacy_*_2024.json", or pre-2026 date is a fabrication tell.
+- phase40b, gpt-oss-20b, .bat files, Windows paths = stale memory mis-stitched. Drop them.
+- Never SKIP citing your own pending authored proposal. Gate C catches it.
+- REASONING must name THIS proposal's specifics. "Continuous improvement", "system looks healthy" = boilerplate, rejected.
+- Structural framing can be right while line numbers and paths are invented. Don't decorate. Cite only what you stat'd or grepped.
+- Cited file must ground the claim — read the preview, don't pattern-match the path.
+- PROPOSED_ACTION creation targets ≠ EVIDENCE. Never cite a to-be-created file as existing.
+- Before PASS on shadow: stat each path, grep each prop_ID, read each preview.

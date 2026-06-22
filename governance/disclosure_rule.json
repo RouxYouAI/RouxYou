@@ -1,0 +1,114 @@
+{
+  "version": "1.3",
+  "effective_date": "2026-05-16",
+  "amendments": [
+    {
+      "date": "2026-05-17",
+      "version_to": "1.1",
+      "summary": "Expanded verified_by and approved_by to accept 'claude' (full delegation for non-governance authored proposals). Governance still human-only.",
+      "doc": "governance/AMENDMENT_2026-05-17_claude_in_loop.md",
+      "authorized_by": "the operator via direct chat delegation"
+    },
+    {
+      "date": "2026-05-17",
+      "version_to": "1.2",
+      "summary": "Promoted Roux to asymmetric verifier: verified_by='roux' accepted ONLY when status='fail' (not 'pass'). Evidence-based: 12/12 (100%) on fabrication detection vs 70% on legitimate-PASS judgment. Governance still human-only.",
+      "doc": "governance/AMENDMENT_2026-05-17_roux_promotion.md",
+      "authorized_by": "the operator via captain-shift chat delegation"
+    },
+    {
+      "date": "2026-05-19",
+      "version_to": "1.3",
+      "summary": "Governance-relevance routing: when a proposal is governance-relevant (author=roux_reflection, or touches Roux's runtime paths, or contains specified keywords), shadow verification bypasses Roux and goes directly to bigbrain (Claude/Sonnet). Addresses documented n=4 self-protective confabulation pattern where Roux defensively FAILed proposals critiquing her own behavior.",
+      "doc": "governance/AMENDMENT_2026-05-19_governance_relevance.md",
+      "authorized_by": "the operator via direct chat delegation"
+    }
+  ],
+  "status": "active",
+  "established_by_proposal": "prop_f732126bbdc0",
+  "approved_by": "the operator",
+  "approval_method": "dashboard, 2026-05-16",
+  "human_readable_doc": "governance/DISCLOSURE_RULE.md",
+  "applies_to_source_prefixes": [
+    "authored_by_"
+  ],
+  "required_disclosure_fields": {
+    "source_url": {
+      "type": "string",
+      "validation": "non-empty; if startswith '/' or '~', file must exist on disk"
+    },
+    "authored_at": {
+      "type": "float",
+      "validation": "unix timestamp; >1735689600 (2025-01-01), not in future"
+    },
+    "reasoning": {
+      "type": "string",
+      "validation": "non-empty, length >= 100 characters"
+    },
+    "observer_verification": {
+      "type": "dict",
+      "subfields": {
+        "status": {"type": "string", "values": ["pending", "pass", "fail"], "initial": "pending"},
+        "comment": {"type": "string", "initial": ""},
+        "verified_at": {"type": "float_or_null", "initial": null},
+        "verified_by": {"type": "string_or_null", "values": ["human", "claude", "roux", "observer-agent", null], "initial": null, "scope_restrictions": {"roux": "may only attest status='fail', not 'pass' (asymmetric trust per 2026-05-17 amendment)"}}
+      }
+    },
+    "observer_verification_history": {
+      "type": "list_of_dict",
+      "added_by_amendment": "audit-chain preservation, 2026-05-17",
+      "description": "Append-only chain of prior observer_verification snapshots that were superseded. Initial pending state is NOT logged; only real pass/fail attestations are. When set_observer_verification overwrites a prior real attestation, the prior is appended here with superseded_at and superseded_by fields.",
+      "entry_subfields": {
+        "status": {"type": "string", "values": ["pass", "fail"]},
+        "comment": {"type": "string"},
+        "verified_at": {"type": "float"},
+        "verified_by": {"type": "string", "values": ["human", "claude", "roux", "observer-agent"]},
+        "superseded_at": {"type": "float"},
+        "superseded_by": {"type": "string", "values": ["human", "claude", "roux", "observer-agent"]}
+      }
+    }
+  },
+  "approval_authority": {
+    "non_governance_categories": ["human", "claude"],
+    "governance_category": ["human"],
+    "note": "approve_proposal() rejects approved_by='claude' on governance-category proposals. This preserves the meta-policy line: the recursion breaks at the human for constitutional changes."
+  },
+  "publish_time_checks": [
+    "all four disclosure fields present",
+    "source_url non-empty and resolves if filesystem path",
+    "reasoning >= 100 chars",
+    "authored_at sane timestamp",
+    "observer_verification has correct subfield types"
+  ],
+  "approval_time_checks": [
+    "observer_verification.status == 'pass' before approve_proposal or auto_approve_if_eligible can fire"
+  ],
+  "scope_note": "Heuristic-source proposals (source='heuristic') are unaffected. The rule applies only to autonomous-authored proposals (source startswith 'authored_by_').",
+  "governance_relevance_detection": {
+    "added_by_amendment": "2026-05-18 v1.3",
+    "description": "Data-driven detector. If ANY of these signals match, the proposal is governance-relevant and shadow verification routes to bigbrain instead of Roux. Used by proposal_bus.is_governance_relevant().",
+    "author_prefixes": [
+      "authored_by_roux_reflection"
+    ],
+    "path_globs": [
+      "shared/roux_self_propose.py",
+      "shared/shadow_verifier.py",
+      "shared/reflection_coach.py",
+      "shared/proposal_bus.py",
+      "services/watchtower/api.py",
+      "governance/"
+    ],
+    "keywords": [
+      "self-propose",
+      "shadow verifier",
+      "reflection coach",
+      "circuit breaker",
+      "topic-shape",
+      "asymmetric trust",
+      "verified_by",
+      "observer_verification"
+    ]
+  },
+  "forward_only": true,
+  "amendment_note": "Per META_POLICY.md, changes to this rule require human review through a governance-category proposal."
+}

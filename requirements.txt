@@ -1,0 +1,24 @@
+﻿fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.10.0
+requests>=2.32.0
+ollama>=0.4.0
+playwright>=1.40.0
+reportlab>=4.0.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+# --- recovered 2026-06-16 (were installed in the old 3.12 venv but never listed;
+#     the Ubuntu 26.04 / py3.14 venv rebuild exposed the gap). All have 3.14 wheels. ---
+psutil>=5.9.0          # shared/lifecycle.py — core, every service imports it
+faiss-cpu>=1.9.0       # memory/vectorstore.py — RAG (abi3 wheel, 3.14-safe)
+scipy>=1.11.0
+filelock>=3.12.0
+streamlit>=1.30.0      # dashboard (was imported, never listed)
+streamlit-autorefresh>=1.0.0
+duckduckgo-search>=6.0.0  # web_researcher (off by default but importable)
+ddgs>=9.0.0
+faster-whisper>=1.0.0  # local STT path
+sounddevice>=0.4.6
+webrtcvad>=2.0.10
+pyautogui>=0.9.54      # legacy desktop-automation tool import

@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "effective_date": "2026-05-16",
+  "status": "active",
+  "authorized_by": "the operator",
+  "drafted_by": "Claude (conversational seat, Claude Code, roux-host)",
+  "authorization_context": "Meeting of 2026-05-16; explicit ship-permission granted at ~21:21 ET",
+  "rule_summary": "Proposals modifying proposal-system rules, observer behavior, auto-approve thresholds, executor permissions, or this meta-policy itself are categorized as 'governance' and require human review. They cannot be auto-approved regardless of priority, confidence, reversibility, or whitelist membership.",
+  "protected_categories": [
+    "governance"
+  ],
+  "protected_surfaces": [
+    "state/auto_approve_config.json",
+    "governance/META_POLICY.md",
+    "governance/meta_policy.json",
+    "shared/proposer.py",
+    "shared/proposal_bus.py",
+    "shared/proposal_handler.py"
+  ],
+  "auto_approve_forbidden_categories": [
+    "governance"
+  ],
+  "human_readable_doc": "governance/META_POLICY.md",
+  "amendment_process": "Roux may propose changes via a governance-category proposal; changes take effect only after DJ's explicit approval through the dashboard.",
+  "bootstrap_step": 1,
+  "bootstrap_path": [
+    {"step": 1, "actor": "DJ", "artifact": "this meta-policy", "status": "active"},
+    {"step": 2, "actor": "Roux", "artifact": "disclosure rule proposal", "status": "pending"},
+    {"step": 3, "actor": "Roux+system", "artifact": "feature-level autonomous proposals", "status": "blocked-on-step-2"}
+  ]
+}
